@@ -1,11 +1,10 @@
 CONFIG_MODULE_SIG=n
+MODULE_NAME=vgw-driver
 
 ifneq ($(KERNELRELEASE),)
 
-obj-m += vgw_drv.o
-vgw_drv-y += ct_netlink.o
-vgw_drv-y += tcp_seq.o
-
+obj-m += $(MODULE_NAME).o
+$(MODULE_NAME)-objs := ct_netlink.o tcp_session.o
 else
 
 BASEDIR := /lib/modules/$(shell uname -r)
@@ -38,7 +37,7 @@ all: clean modules #install
 
 .PHONY:modules
 modules:
-	 KCPPFLAGS="-DMODULE_VER=\"$(VER)\"" make V=1 -C $(KERNELDIR) M=$(PWD) CFLAGS_MODULE="-DMODULE_VER=$(VER)" modules 
+	 KCPPFLAGS="-DMODULE_VER=\"$(VER)\"" make -C $(KERNELDIR) M=$(PWD) CFLAGS_MODULE="-DMODULE_VER=$(VER)" modules 
 
 .PHONY:install
 install:

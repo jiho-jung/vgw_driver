@@ -55,6 +55,7 @@
 #include <linux/netfilter/nfnetlink_conntrack.h>
 
 #include "nf_internals.h"
+#include "tcp_session.h"
 
 MODULE_LICENSE("GPL");
 
@@ -194,15 +195,17 @@ nla_put_failure:
 	return -1;
 }
 
-// JIHO
-// 3) add protoinfo_tcp_seq
-
 static int ctnetlink_dump_protoinfo(struct sk_buff *skb, struct nf_conn *ct,
 				    bool destroy)
 {
 	const struct nf_conntrack_l4proto *l4proto;
 	struct nlattr *nest_proto;
 	int ret;
+
+	u_int8_t proto = nf_ct_protonum(ct);
+	if (proto == IPPROTO_TCP) {
+		return vgw_dump_tcp_protoinfo(skb, ct, destroy);
+	}
 
 	l4proto = nf_ct_l4proto_find(nf_ct_protonum(ct));
 	if (!l4proto->to_nlattr)
@@ -751,6 +754,13 @@ ctnetlink_conntrack_event(unsigned int events, const struct nf_ct_event *item)
 	} else
 		return 0;
 
+	zone = nf_ct_zone(ct);
+	if (zone != NULL && 
+		group == NFNLGRP_CONNTRACK_NEW && 
+		zone->id == NF_CT_DEFAULT_ZONE_ID) {
+		vgw_update_tcp_state(ct);
+	}
+
 	net = nf_ct_net(ct);
 	if (!item->report && !nfnetlink_has_listeners(net, group))
 		return 0;
@@ -766,10 +776,6 @@ ctnetlink_conntrack_event(unsigned int events, const struct nf_ct_event *item)
 		goto nlmsg_failure;
 
 	zone = nf_ct_zone(ct);
-
-	// JIHO
-	// 1) set SYN_RECVED
-	// 2) tcp_be_liberal
 
 	nest_parms = nla_nest_start(skb, CTA_TUPLE_ORIG);
 	if (!nest_parms)
