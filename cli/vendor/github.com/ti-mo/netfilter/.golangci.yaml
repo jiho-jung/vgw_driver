@@ -1,0 +1,20 @@
+linters:
+  enable:
+    - err113
+    - gofmt
+    - goimports
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unused
+    - goheader
+    - errcheck
+    - gocyclo
+    - revive
+    - gosec
+    - gosimple
+    - lll
+    - misspell
+    - prealloc
+    - typecheck

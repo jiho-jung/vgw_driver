@@ -1,0 +1,286 @@
+diff --git a/Makefile b/Makefile
+index ae6f0ac..4ae2d9f 100644
+--- a/Makefile
++++ b/Makefile
+@@ -16,6 +16,12 @@ generate:
+ test:
+ 	go test -race ./...
+ 
++label:
++	sudo go test -v -run TestLabel
++
++dump:
++	sudo go test -v -run TestDump
++
+ .PHONY: testv
+ testv:
+ 	go test -v -race ./...
+@@ -50,6 +56,9 @@ coverhtml-integration: integration
+ bench:
+ 	go test -bench=. ./...
+ 
++ben:
++	sudo go test -tags=integration -bench=Msg -count 5
++
+ .PHONY: bench-integration
+ bench-integration: modprobe
+ 	go test -bench=. -tags=integration -exec sudo ./...
+diff --git a/conn_integration_test.go b/conn_integration_test.go
+index 7304d17..8c41ea1 100644
+--- a/conn_integration_test.go
++++ b/conn_integration_test.go
+@@ -1,16 +1,17 @@
+-//+build integration
+-
+ package conntrack
+ 
+ import (
++	"encoding/binary"
+ 	"fmt"
+ 	"io/ioutil"
+ 	"log"
++	"net"
+ 	"os"
+ 	"strings"
+ 	"testing"
+ 
+ 	"github.com/stretchr/testify/require"
++	"github.com/ti-mo/netfilter"
+ 
+ 	"github.com/mdlayher/netlink"
+ 	"github.com/vishvananda/netns"
+@@ -122,3 +123,55 @@ func findKsym(sym string) bool {
+ 
+ 	return false
+ }
++
++/////////////////////////
++
++func testMarshal(f Flow) error {
++	attrs, err := f.marshal()
++	if err != nil {
++		return err
++	}
++
++	pf := netfilter.ProtoIPv4
++	if f.TupleOrig.IP.IsIPv6() && f.TupleReply.IP.IsIPv6() {
++		pf = netfilter.ProtoIPv6
++	}
++
++	req, err := netfilter.MarshalNetlink(
++		netfilter.Header{
++			SubsystemID: netfilter.NFSubsysCTNetlink,
++			MessageType: netfilter.MessageType(ctNew),
++			Family:      pf,
++			Flags:       netlink.Request | netlink.Acknowledge,
++		}, attrs)
++
++	if err != nil {
++		return err
++	}
++	_ = req
++
++	return nil
++}
++
++func BenchmarkMsg(b *testing.B) {
++	src := net.ParseIP("1.1.1.1")
++	dst := net.ParseIP("1.1.1.1")
++	sp := uint16(2222)
++	dp := uint16(22)
++
++	f := NewFlow(
++		6, 0,
++		src, dst,
++		sp, dp,
++		0, 0)
++
++	f.Labels = make([]byte, 16)
++	f.LabelsMask = make([]byte, 16)
++	binary.LittleEndian.PutUint32(f.Labels[0:4], 1)
++	binary.LittleEndian.PutUint32(f.LabelsMask[0:4], ^uint32(0))
++
++	// update
++	for i := 0; i < b.N; i++ {
++		testMarshal(f)
++	}
++}
+diff --git a/conn_test.go b/conn_test.go
+index 27e97d3..38e11ea 100644
+--- a/conn_test.go
++++ b/conn_test.go
+@@ -1,10 +1,12 @@
+ package conntrack_test
+ 
+ import (
++	"encoding/binary"
+ 	"fmt"
+ 	"log"
+ 	"net"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/mdlayher/netlink"
+ 	"github.com/stretchr/testify/assert"
+@@ -214,3 +216,117 @@ func ExampleConn_listen() {
+ 	// Stop the program as soon as an error is caught in a decoder goroutine.
+ 	log.Print(<-errCh)
+ }
++
++func TestLabel(t *testing.T) {
++	// Open a Conntrack connection.
++	c, err := conntrack.Dial(nil)
++	if err != nil {
++		log.Fatalf("1. %s", err)
++	}
++
++	// Dump all records in the Conntrack table that match the filter's mark/mask.
++	df, err := c.Dump(nil)
++	if err != nil {
++		log.Fatalf("2. %s", err)
++	}
++
++	var uf conntrack.Flow
++	var found bool
++
++	for i, f := range df {
++		if f.TupleOrig.Proto.Protocol == 6 &&
++			f.TupleOrig.Proto.DestinationPort == 22 {
++			uf = f
++			fmt.Printf("### 1. %d: flow:%+v \n", i, f)
++			found = true
++			break
++		}
++	}
++
++	if !found {
++		fmt.Printf("### 2. not selected flow \n")
++	}
++
++	fmt.Printf("### 2. selected flow:%+v \n", uf)
++
++	// get a single flow
++	// Set up a new Flow object using a given set of attributes.
++	src := uf.TupleOrig.IP.SourceAddress.String()
++	dst := uf.TupleOrig.IP.DestinationAddress.String()
++	mark := uint32(1111)
++
++	timestamp := uint32(time.Now().Unix())
++	fmt.Printf("%d \n", timestamp)
++
++	f := conntrack.NewFlow(
++		uf.TupleOrig.Proto.Protocol,
++		0,
++		net.ParseIP(src),
++		net.ParseIP(dst),
++		uf.TupleOrig.Proto.SourcePort,
++		uf.TupleOrig.Proto.DestinationPort,
++		0,
++		mark)
++
++	f.TupleOrig.Proto.ICMPv4 = uf.TupleOrig.Proto.ICMPv4
++	f.TupleOrig.Proto.ICMPID = uf.TupleOrig.Proto.ICMPID
++	f.TupleOrig.Proto.ICMPType = uf.TupleOrig.Proto.ICMPType
++
++	//////////////////////
++	// update label
++
++	f.Labels = make([]byte, 16)
++	f.LabelsMask = make([]byte, 16)
++
++	binary.BigEndian.PutUint32(f.Labels[0:4], timestamp)
++	binary.BigEndian.PutUint32(f.LabelsMask[0:4], ^uint32(0))
++
++	if false {
++		f.Labels[10] = 99
++		f.Labels[11] = 88
++		f.LabelsMask[10] = 0xff
++		f.LabelsMask[11] = 0xff
++	}
++
++	fmt.Printf("### 3. Labels: %+v \n", f.Labels)
++	fmt.Printf("### 3.   mask: %+v \n", f.LabelsMask)
++
++	// update
++	err = c.Update(f)
++	if err != nil {
++		log.Fatalf("3. %s", err)
++	}
++
++	////////////////////////
++
++	// Query the kernel based on the Flow's source/destination tuples.
++	// Returns a new Flow object with its connection ID assigned by the kernel.
++	qf, err := c.Get(f)
++	if err != nil {
++		log.Fatalf("4. %s", err)
++	}
++
++	fmt.Printf("### 3. get flow:%+v \n", qf)
++}
++
++func TestDump(t *testing.T) {
++	// Open a Conntrack connection.
++	c, err := conntrack.Dial(nil)
++	if err != nil {
++		log.Fatalf("1. %s", err)
++	}
++
++	// Dump all records in the Conntrack table that match the filter's mark/mask.
++	df, err := c.Dump(nil)
++	if err != nil {
++		log.Fatalf("2. %s", err)
++	}
++
++	var i int
++	for _, f := range df {
++		if f.TupleOrig.Proto.Protocol == 1 {
++			i++
++			fmt.Printf("### %d: flow:%+v \n", i, f)
++		}
++	}
++}
+diff --git a/flow.go b/flow.go
+index 07617f1..a1b3c35 100644
+--- a/flow.go
++++ b/flow.go
+@@ -267,6 +267,18 @@ func (f Flow) marshal() ([]netfilter.Attribute, error) {
+ 		attrs = append(attrs, f.SynProxy.marshal())
+ 	}
+ 
++	if len(f.Labels) > 0 {
++		a := netfilter.Attribute{Type: uint16(ctaLabels)}
++		a.Data = f.Labels
++		attrs = append(attrs, a)
++	}
++
++	if len(f.LabelsMask) > 0 {
++		a := netfilter.Attribute{Type: uint16(ctaLabelsMask)}
++		a.Data = f.LabelsMask
++		attrs = append(attrs, a)
++	}
++
+ 	return attrs, nil
+ }
+ 
+diff --git a/tuple.go b/tuple.go
+index 8889eb3..01bd98a 100644
+--- a/tuple.go
++++ b/tuple.go
+@@ -34,6 +34,16 @@ func (t Tuple) filled() bool {
+ 
+ // String returns a string representation of a Tuple.
+ func (t Tuple) String() string {
++	if t.Proto.Protocol == unix.IPPROTO_ICMP {
++		return fmt.Sprintf("<%s, Src: %s, Dst: %s, icmp: id=%d, type=%d, code=%d>",
++			protoLookup(t.Proto.Protocol),
++			t.IP.SourceAddress.String(),
++			t.IP.DestinationAddress.String(),
++			t.Proto.ICMPID,
++			t.Proto.ICMPType,
++			t.Proto.ICMPCode)
++	}
++
+ 	return fmt.Sprintf("<%s, Src: %s, Dst: %s>",
+ 		protoLookup(t.Proto.Protocol),
+ 		net.JoinHostPort(t.IP.SourceAddress.String(), strconv.Itoa(int(t.Proto.SourcePort))),
