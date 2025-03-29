@@ -1004,12 +1004,12 @@ ctnetlink_alloc_filter(const struct nlattr * const cda[], u8 family)
 	if (err)
 		goto err_filter;
 
-	if (!cda[CTA_FILTER])
-		return filter;
-
 	err = ctnetlink_parse_zone(cda[CTA_ZONE], &filter->zone);
 	if (err < 0)
 		goto err_filter;
+
+	if (!cda[CTA_FILTER])
+		return filter;
 
 	err = ctnetlink_parse_filter(cda[CTA_FILTER], filter);
 	if (err < 0)
@@ -1055,7 +1055,7 @@ err_filter:
 
 static bool ctnetlink_needs_filter(u8 family, const struct nlattr * const *cda)
 {
-	return family || cda[CTA_MARK] || cda[CTA_FILTER] || cda[CTA_STATUS];
+	return family || cda[CTA_MARK] || cda[CTA_FILTER] || cda[CTA_STATUS] || cda[CTA_ZONE];
 }
 
 static int ctnetlink_start(struct netlink_callback *cb)
@@ -1067,8 +1067,9 @@ static int ctnetlink_start(struct netlink_callback *cb)
 
 	if (ctnetlink_needs_filter(family, cda)) {
 		filter = ctnetlink_alloc_filter(cda, family);
-		if (IS_ERR(filter))
+		if (IS_ERR(filter)) {
 			return PTR_ERR(filter);
+		}
 	}
 
 	cb->data = filter;
@@ -1175,6 +1176,12 @@ static int ctnetlink_filter_match(struct nf_conn *ct, void *data)
 						  filter->family))
 			goto ignore_entry;
 	}
+
+#ifdef CONFIG_NF_CONNTRACK_ZONES
+	if ((filter->zone.flags & NF_CT_ZONE_DIR_ORIG) && 
+		nf_ct_zone_id(nf_ct_zone(ct), IP_CT_DIR_ORIGINAL) != filter->zone.id)
+		goto ignore_entry;
+#endif
 
 #ifdef CONFIG_NF_CONNTRACK_MARK
 	if ((READ_ONCE(ct->mark) & filter->mark.mask) != filter->mark.val)
@@ -1403,8 +1410,10 @@ ctnetlink_parse_zone(const struct nlattr *attr,
 	nf_ct_zone_init(zone, NF_CT_DEFAULT_ZONE_ID,
 			NF_CT_DEFAULT_ZONE_DIR, 0);
 #ifdef CONFIG_NF_CONNTRACK_ZONES
-	if (attr)
+	if (attr) {
 		zone->id = ntohs(nla_get_be16(attr));
+		zone->flags = NF_CT_ZONE_DIR_ORIG;
+	}
 #else
 	if (attr)
 		return -EOPNOTSUPP;
