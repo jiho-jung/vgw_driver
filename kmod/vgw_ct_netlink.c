@@ -57,6 +57,9 @@
 #include "nf_internals.h"
 #include "tcp_session.h"
 
+// 2025.3.
+// copied from linux-5.14.0-362.8.1.el9_3/net/netfilter/nf_conntrack_netlink.c
+
 MODULE_LICENSE("GPL");
 
 struct ctnetlink_list_dump_ctx {
