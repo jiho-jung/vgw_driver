@@ -3,10 +3,12 @@ module github.com/vgw_driver
 go 1.22.6
 
 require (
+	github.com/google/gopacket v1.1.19
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	github.com/subchen/go-log v3.0.0+incompatible
 	github.com/ti-mo/conntrack v0.5.1
+	golang.org/x/net v0.33.0
 )
 
 require (
@@ -28,7 +30,6 @@ require (
 	github.com/ti-mo/netfilter v0.5.2 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
-	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/text v0.21.0 // indirect

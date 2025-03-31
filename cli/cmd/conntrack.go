@@ -52,6 +52,12 @@ var cmdCtAdd = &cobra.Command{
 	Run:   runCmdCtAdd,
 }
 
+var cmdCtReset = &cobra.Command{
+	Use:   "reset",
+	Short: "reset conntracks",
+	Run:   runCmdCtReset,
+}
+
 func init() {
 	cmdCt.PersistentFlags().IntP("zone", "z", -1, "zone id")
 	viper.BindPFlag("zone", cmdCt.PersistentFlags().Lookup("zone"))
@@ -70,8 +76,73 @@ func init() {
 
 	cmdCt.AddCommand(cmdCtAdd)
 
+	cmdCtReset.Flags().IntP("sport", "s", -1, "src port")
+	cmdCtReset.Flags().IntP("dport", "d", -1, "dst port")
+	if err := viper.BindPFlags(cmdCtReset.Flags()); err != nil {
+		log.Errorf("failed to dump p-flags: %v", err)
+	}
+	cmdCt.AddCommand(cmdCtReset)
+
 	// ct root cmd
 	RootCmd.AddCommand(cmdCt)
+}
+
+func runCmdCtReset(cmd *cobra.Command, args []string) {
+	log.Debugf("Reset Conntracks")
+
+	zone := viper.GetInt("zone")
+	sport := viper.GetInt("sport")
+	dport := viper.GetInt("dport")
+
+	c, err := conntrack.Dial(nil)
+	if err != nil {
+		log.Fatalf("1. %s", err)
+	}
+
+	var f *conntrack.FilterZone
+	if zone != -1 {
+		f = &conntrack.FilterZone{
+			Zone: uint16(zone),
+		}
+	}
+
+	cts, err := c.DumpFilter(f, nil)
+	if err != nil {
+		log.Fatalf("2. %s", err)
+	}
+
+	var i int
+	for _, ct := range cts {
+		if ct.ProtoInfo.TCP == nil {
+			continue
+		} else if ct.TupleOrig.Proto.Protocol != 6 {
+			continue
+		} else if sport != -1 && ct.TupleOrig.Proto.SourcePort != uint16(sport) {
+			continue
+		} else if dport != -1 && ct.TupleOrig.Proto.DestinationPort != uint16(dport) {
+			continue
+		}
+
+		fmt.Printf("CT(%d): %+v \n", i+1, ct)
+		fmt.Printf("  TCP: %+v \n", *ct.ProtoInfo.TCP)
+		if ct.ProtoInfo.TCP.SeqTrack != nil {
+			fmt.Printf("  TCP SEQ: %+v \n", *ct.ProtoInfo.TCP.SeqTrack)
+			tcpReset(&ct)
+		}
+	}
+}
+
+func tcpReset(ct *conntrack.Flow) {
+	tuple := &ct.TupleOrig
+	seqTrk := ct.ProtoInfo.TCP.SeqTrack
+
+	SendTcpReset(tuple.IP.DestinationAddress,
+		tuple.IP.SourceAddress,
+		tuple.Proto.DestinationPort,
+		tuple.Proto.SourcePort,
+		seqTrk.LastAck,
+		seqTrk.LastSeq,
+	)
 }
 
 func runCmdCtShow(cmd *cobra.Command, args []string) {
@@ -97,7 +168,6 @@ func runCmdCtShow(cmd *cobra.Command, args []string) {
 		log.Fatalf("2. %s", err)
 	}
 
-	log.Debugf("### Start dump ct")
 	var i int
 	for _, ct := range cts {
 		fmt.Printf("CT(%d): %+v \n", i+1, ct)
