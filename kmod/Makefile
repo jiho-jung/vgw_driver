@@ -29,15 +29,23 @@ PWD :=$(shell pwd)
 #}}}}}' \
 #)
 
-VER="1-25-3"
-KBUILD_CFLAGS +=
+
+MAJ_VER=1
+MIN_VER=1
+EXT_VER=1
+
+EXT_FLASG=
+EXT_FLAGS+=-DMAJ_VER=$(MAJ_VER)
+EXT_FLAGS+=-DMIN_VER=$(MIN_VER)
+EXT_FLAGS+=-DEXT_VER=$(EXT_VER)
+
 
 .PHONY:all 
 all: clean modules #install
 
 .PHONY:modules
 modules:
-	 KCPPFLAGS="-DMODULE_VER=\"$(VER)\"" make -C $(KERNELDIR) M=$(PWD) CFLAGS_MODULE="-DMODULE_VER=$(VER)" modules 
+	 make -C $(KERNELDIR) V=1 M=$(PWD) ccflags-y="$(EXT_FLAGS)" modules 
 
 .PHONY:install
 install:

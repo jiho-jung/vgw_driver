@@ -56,6 +56,7 @@
 
 #include "nf_internals.h"
 #include "tcp_session.h"
+#include "vgw_version.h"
 
 // 2025.3.
 // copied from linux-5.14.0-362.8.1.el9_3/net/netfilter/nf_conntrack_netlink.c
@@ -3905,7 +3906,7 @@ static int __init ctnetlink_init(void)
 {
 	int ret;
 
-	pr_info("Init VGW Netlink Module: v1.0.0 \n");
+	pr_info("Init VGW Netlink Module: %s\n", VERSION_STRING);
 
 	NL_ASSERT_DUMP_CTX_FITS(struct ctnetlink_list_dump_ctx);
 
@@ -3915,13 +3916,11 @@ static int __init ctnetlink_init(void)
 		goto err_out;
 	}
 
-	/*
 	ret = nfnetlink_subsys_register(&ctnl_exp_subsys);
 	if (ret < 0) {
 		pr_err("ctnetlink_init: cannot register exp with nfnetlink.\n");
 		goto err_unreg_subsys;
 	}
-	*/
 
 	ret = register_pernet_subsys(&ctnetlink_net_ops);
 	if (ret < 0) {
@@ -3935,8 +3934,8 @@ static int __init ctnetlink_init(void)
 	return 0;
 
 err_unreg_exp_subsys:
-	//nfnetlink_subsys_unregister(&ctnl_exp_subsys);
-//err_unreg_subsys:
+	nfnetlink_subsys_unregister(&ctnl_exp_subsys);
+err_unreg_subsys:
 	nfnetlink_subsys_unregister(&ctnl_subsys);
 err_out:
 	return ret;
@@ -3945,14 +3944,14 @@ err_out:
 static void __exit ctnetlink_exit(void)
 {
 	unregister_pernet_subsys(&ctnetlink_net_ops);
-	//nfnetlink_subsys_unregister(&ctnl_exp_subsys);
+	nfnetlink_subsys_unregister(&ctnl_exp_subsys);
 	nfnetlink_subsys_unregister(&ctnl_subsys);
 #ifdef CONFIG_NETFILTER_NETLINK_GLUE_CT
 	RCU_INIT_POINTER(nfnl_ct_hook, NULL);
 #endif
 	synchronize_rcu();
 
-	pr_info("exit VGW Netlink Module: v1.0.0 \n");
+	pr_info("exit VGW Netlink Module: %s\n", VERSION_STRING);
 }
 
 module_init(ctnetlink_init);
