@@ -4,7 +4,7 @@ MODULE_NAME=vgw-driver
 ifneq ($(KERNELRELEASE),)
 
 obj-m += $(MODULE_NAME).o
-$(MODULE_NAME)-objs := ct_netlink.o tcp_session.o
+$(MODULE_NAME)-objs := vgw_ct_netlink.o tcp_session.o
 else
 
 BASEDIR := /lib/modules/$(shell uname -r)
