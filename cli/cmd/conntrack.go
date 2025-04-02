@@ -63,6 +63,10 @@ func init() {
 
 	cmdCtReset.Flags().IntP("sport", "s", -1, "src port")
 	cmdCtReset.Flags().IntP("dport", "d", -1, "dst port")
+	cmdCtReset.Flags().IntP("vni", "v", -1, "VXLAN ID")
+	cmdCtReset.Flags().StringP("tunip", "t", "", "tunnel dest ip")
+	cmdCtReset.Flags().IntP("tunport", "p", 4789, "tunnel dst port")
+
 	if err := viper.BindPFlags(cmdCtReset.Flags()); err != nil {
 		log.Errorf("failed to dump p-flags: %v", err)
 	}
@@ -78,6 +82,23 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 	zone := viper.GetInt("zone")
 	sport := viper.GetInt("sport")
 	dport := viper.GetInt("dport")
+	vni := viper.GetInt("vni")
+	tunport := viper.GetInt("tunport")
+	tunip := viper.GetString("tunip")
+
+	var vxlanInfo *VxlanInfo
+	if vni != -1 {
+		if len(tunip) < 1 {
+			log.Errorf("Tunnel IP is needed: vni=%d", vni)
+			return
+		}
+
+		vxlanInfo = &VxlanInfo{
+			Vni:        uint32(vni),
+			TunDstIp:   tunip,
+			TunDstPort: uint16(tunport),
+		}
+	}
 
 	c, err := conntrack.Dial(nil)
 	if err != nil {
@@ -112,22 +133,25 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 		fmt.Printf("  TCP: %+v \n", *ct.ProtoInfo.TCP)
 		if ct.ProtoInfo.TCP.SeqTrack != nil {
 			fmt.Printf("  TCP SEQ: %+v \n", *ct.ProtoInfo.TCP.SeqTrack)
-			tcpReset(&ct)
+			tcpReset(&ct, vxlanInfo)
 		}
 	}
 }
 
-func tcpReset(ct *conntrack.Flow) {
+func tcpReset(ct *conntrack.Flow, vxlanInfo *VxlanInfo) {
 	tuple := &ct.TupleOrig
 	seqTrk := ct.ProtoInfo.TCP.SeqTrack
 
-	SendTcpReset(tuple.IP.DestinationAddress,
-		tuple.IP.SourceAddress,
-		tuple.Proto.DestinationPort,
-		tuple.Proto.SourcePort,
-		seqTrk.LastAck,
-		seqTrk.LastSeq,
-	)
+	tcpInfo := TcpInfo{
+		SrcIp:   tuple.IP.DestinationAddress,
+		DstIp:   tuple.IP.SourceAddress,
+		SrcPort: tuple.Proto.DestinationPort,
+		DstPort: tuple.Proto.SourcePort,
+		Seq:     seqTrk.LastAck,
+		Ack:     seqTrk.LastSeq,
+	}
+
+	SendTcpReset(&tcpInfo, vxlanInfo)
 }
 
 func runCmdCtShow(cmd *cobra.Command, args []string) {

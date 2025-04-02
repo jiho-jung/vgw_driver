@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"encoding/binary"
+	"fmt"
 	"net"
 	"net/netip"
 
@@ -10,14 +12,43 @@ import (
 	"golang.org/x/net/ipv4"
 )
 
-func SendTcpReset(srcIp netip.Addr, dstIp netip.Addr, srcPort uint16, dstPort uint16, seq uint32, ack uint32) {
-	log.Infof("## Send TCP Rst: %s:%d:%d -> %s:%d:%d",
-		srcIp, srcPort, ack,
-		dstIp, dstPort, seq)
+type VxlanInfo struct {
+	Vni        uint32
+	TunDstIp   string
+	TunDstPort uint16
+}
 
-	src := net.IP(srcIp.AsSlice())
-	dst := net.IP(dstIp.AsSlice())
+type TcpInfo struct {
+	SrcIp   netip.Addr
+	DstIp   netip.Addr
+	SrcPort uint16
+	DstPort uint16
+	Seq     uint32
+	Ack     uint32
+}
 
+func SendTcpReset(tcpInfo *TcpInfo, vxlanInfo *VxlanInfo) {
+
+	if vxlanInfo != nil {
+		log.Infof("## Send TCP Rst on Vxlan: %s:%d:%d={%s:%d:%d -> %s:%d:%d}",
+			vxlanInfo.TunDstIp, vxlanInfo.TunDstPort, vxlanInfo.Vni,
+			tcpInfo.SrcIp, tcpInfo.SrcPort, tcpInfo.Ack, tcpInfo.DstIp, tcpInfo.DstPort, tcpInfo.Seq)
+	} else {
+		log.Infof("## Send TCP Rst: %s:%d:%d -> %s:%d:%d",
+			tcpInfo.SrcIp, tcpInfo.SrcPort, tcpInfo.Ack, tcpInfo.DstIp, tcpInfo.DstPort, tcpInfo.Seq)
+	}
+
+	// ethernet header
+	eth := layers.Ethernet{
+		EthernetType: layers.EthernetTypeIPv4,
+		SrcMAC:       net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		DstMAC:       net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+	}
+	_ = eth
+
+	// ip header
+	src := net.IP(tcpInfo.SrcIp.AsSlice())
+	dst := net.IP(tcpInfo.DstIp.AsSlice())
 	ip := layers.IPv4{
 		SrcIP:    src,
 		DstIP:    dst,
@@ -26,12 +57,13 @@ func SendTcpReset(srcIp netip.Addr, dstIp netip.Addr, srcPort uint16, dstPort ui
 		Protocol: layers.IPProtocolTCP,
 	}
 
+	// tcp header
 	tcp := layers.TCP{
-		SrcPort: layers.TCPPort(srcPort),
-		DstPort: layers.TCPPort(dstPort),
+		SrcPort: layers.TCPPort(tcpInfo.SrcPort),
+		DstPort: layers.TCPPort(tcpInfo.DstPort),
 		Urgent:  0,
-		Seq:     seq,
-		Ack:     ack,
+		Seq:     tcpInfo.Seq,
+		Ack:     tcpInfo.Ack,
 		ACK:     true,
 		SYN:     false,
 		FIN:     false,
@@ -50,22 +82,70 @@ func SendTcpReset(srcIp netip.Addr, dstIp netip.Addr, srcPort uint16, dstPort ui
 
 	tcp.SetNetworkLayerForChecksum(&ip)
 
+	pktBuf := gopacket.NewSerializeBuffer()
+
+	if vxlanInfo == nil {
+		// Ip packet
+		err := gopacket.SerializeLayers(pktBuf, opts, &tcp)
+		if err != nil {
+			log.Errorf("failed to build tcp packet: err=%s", err)
+			return
+		}
+
+		err = sendIpSocket(opts, &ip, pktBuf.Bytes())
+		if err != nil {
+			log.Errorf("failed to send tcp packet: err=%s", err)
+		}
+
+		return
+	}
+
+	err := gopacket.SerializeLayers(pktBuf, opts, &eth, &ip, &tcp)
+	if err != nil {
+		log.Errorf("failed to serialize packet: err=%s", err)
+		return
+	}
+
+	// Vxlan
+	err = sendVxlan(vxlanInfo, pktBuf.Bytes())
+}
+
+func sendVxlan(vxlanInfo *VxlanInfo, payload []byte) error {
+	udpSock, err := net.ListenPacket("udp", ":0")
+	if err != nil {
+		return err
+	}
+
+	vxlanHdr := []byte{0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+
+	// set VNI
+	binary.BigEndian.PutUint32(vxlanHdr[3:7], vxlanInfo.Vni)
+	vxlanHdr[3] = 0
+
+	// resolve UDP addr
+	dst, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%v:%d", vxlanInfo.TunDstIp, vxlanInfo.TunDstPort))
+	if err != nil {
+		return err
+	}
+
+	_, err = udpSock.WriteTo(append(vxlanHdr, payload...), dst)
+
+	return err
+}
+
+func sendIpSocket(opts gopacket.SerializeOptions, ip *layers.IPv4, payload []byte) error {
 	ipHeaderBuf := gopacket.NewSerializeBuffer()
 	err := ip.SerializeTo(ipHeaderBuf, opts)
 	if err != nil {
-		panic(err)
-	}
-	ipHeader, err := ipv4.ParseHeader(ipHeaderBuf.Bytes())
-	if err != nil {
-		panic(err)
+		return err
 	}
 
-	tcpPayloadBuf := gopacket.NewSerializeBuffer()
-	err = gopacket.SerializeLayers(tcpPayloadBuf, opts, &tcp)
+	ipHeader, err := ipv4.ParseHeader(ipHeaderBuf.Bytes())
 	if err != nil {
-		log.Errorf("failed to build tcp packet: err=%s", err)
-		return
+		return err
 	}
+
+	_ = ipHeader
 
 	// send packet
 	var packetConn net.PacketConn
@@ -73,14 +153,67 @@ func SendTcpReset(srcIp netip.Addr, dstIp netip.Addr, srcPort uint16, dstPort ui
 	//packetConn, err = net.ListenPacket("ip4:tcp", "2.2.2.109")
 	packetConn, err = net.ListenPacket("ip4:tcp", "0.0.0.0")
 	if err != nil {
-		panic(err)
+		return err
 	}
+
 	rawConn, err = ipv4.NewRawConn(packetConn)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	err = rawConn.WriteTo(ipHeader, tcpPayloadBuf.Bytes(), nil)
+	err = rawConn.WriteTo(ipHeader, payload, nil)
 
-	log.Printf("packet of length %d sent!\n", (len(tcpPayloadBuf.Bytes()) + len(ipHeaderBuf.Bytes())))
+	log.Printf("packet of length %d sent!\n", (len(payload) + len(ipHeaderBuf.Bytes())))
+
+	return nil
 }
+
+/*
+func send_udp(data []byte,
+	udpLayer *layers.UDP,
+	ipv4Layer *layers.IPv4,
+	ethernetLayer *layers.Ethernet,
+	options gopacket.SerializeOptions,
+) (err error) {
+
+	buffer := gopacket.NewSerializeBuffer()
+	gopacket.SerializeLayers(buffer, options,
+		udpLayer,
+		gopacket.Payload(data),
+	)
+
+	return send_ipv4(buffer.Bytes(), ipv4Layer, ethernetLayer, options)
+}
+
+func send_ipv4(data []byte,
+	ipv4Layer *layers.IPv4,
+	ethernetLayer *layers.Ethernet,
+	options gopacket.SerializeOptions,
+) (err error) {
+
+	buffer_ipv4 := gopacket.NewSerializeBuffer()
+	gopacket.SerializeLayers(buffer_ipv4, options,
+		ipv4Layer,
+		gopacket.Payload(data),
+	)
+	return send_ethernet(buffer_ipv4.Bytes(), ethernetLayer, options)
+}
+
+func send_ethernet(data []byte,
+	ethernetLayer *layers.Ethernet,
+	options gopacket.SerializeOptions,
+) (err error) {
+
+	buffer_ethernet := gopacket.NewSerializeBuffer()
+	gopacket.SerializeLayers(buffer_ethernet, options,
+		ethernetLayer,
+		gopacket.Payload(data),
+	)
+
+	err = handle.WritePacketData(buffer_ethernet.Bytes())
+	if err != nil {
+		log.Fatal(err)
+	}
+	return err
+}
+*/
