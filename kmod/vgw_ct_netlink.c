@@ -3877,8 +3877,8 @@ static const struct nfnetlink_subsystem ctnl_exp_subsys = {
 	.cb				= ctnl_exp_cb,
 };
 
-//MODULE_VERSION("1.0");
-MODULE_ALIAS("ip_conntrack_netlink");
+MODULE_VERSION(VERSION_STRING);
+MODULE_ALIAS("vgw_conntrack_netlink");
 MODULE_ALIAS_NFNL_SUBSYS(NFNL_SUBSYS_CTNETLINK);
 MODULE_ALIAS_NFNL_SUBSYS(NFNL_SUBSYS_CTNETLINK_EXP);
 

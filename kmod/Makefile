@@ -45,7 +45,7 @@ all: clean modules #install
 
 .PHONY:modules
 modules:
-	 make -C $(KERNELDIR) V=1 M=$(PWD) ccflags-y="$(EXT_FLAGS)" modules 
+	 make -C $(KERNELDIR) M=$(PWD) ccflags-y="$(EXT_FLAGS)" modules 
 
 .PHONY:install
 install:
