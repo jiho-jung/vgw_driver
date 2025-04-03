@@ -14,11 +14,14 @@ import (
 
 type VxlanInfo struct {
 	Vni        uint32
+	TunSrcIp   string
 	TunDstIp   string
 	TunDstPort uint16
 }
 
 type TcpInfo struct {
+	SrcMAC  net.HardwareAddr
+	DstMAC  net.HardwareAddr
 	SrcIp   netip.Addr
 	DstIp   netip.Addr
 	SrcPort uint16
@@ -30,13 +33,19 @@ type TcpInfo struct {
 func SendTcpReset(tcpInfo *TcpInfo, vxlanInfo *VxlanInfo) {
 
 	if vxlanInfo != nil {
-		log.Infof("## Send TCP Rst on Vxlan: %s:%d:%d={%s:%d:%d -> %s:%d:%d}",
-			vxlanInfo.TunDstIp, vxlanInfo.TunDstPort, vxlanInfo.Vni,
-			tcpInfo.SrcIp, tcpInfo.SrcPort, tcpInfo.Ack, tcpInfo.DstIp, tcpInfo.DstPort, tcpInfo.Seq)
-	} else {
-		log.Infof("## Send TCP Rst: %s:%d:%d -> %s:%d:%d",
-			tcpInfo.SrcIp, tcpInfo.SrcPort, tcpInfo.Ack, tcpInfo.DstIp, tcpInfo.DstPort, tcpInfo.Seq)
+		/*
+			log.Infof("## Send TCP Rst on Vxlan: %s:%d:%d={%s:%d:%d -> %s:%d:%d}",
+				vxlanInfo.TunDstIp, vxlanInfo.TunDstPort, vxlanInfo.Vni,
+				tcpInfo.SrcIp, tcpInfo.SrcPort, tcpInfo.Ack, tcpInfo.DstIp, tcpInfo.DstPort, tcpInfo.Seq)
+		*/
+
+		log.Infof("## VxLan Info: %+v", vxlanInfo)
 	}
+
+	//log.Infof("## Send TCP Rst: %s:%d:%d -> %s:%d:%d",
+	//	tcpInfo.SrcIp, tcpInfo.SrcPort, tcpInfo.Ack, tcpInfo.DstIp, tcpInfo.DstPort, tcpInfo.Seq)
+
+	log.Infof("## Send TCP Rst: %+v", tcpInfo)
 
 	// ethernet header
 	eth := layers.Ethernet{
@@ -115,6 +124,7 @@ func sendVxlan(vxlanInfo *VxlanInfo, payload []byte) error {
 	if err != nil {
 		return err
 	}
+	defer udpSock.Close()
 
 	vxlanHdr := []byte{0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 
@@ -128,7 +138,10 @@ func sendVxlan(vxlanInfo *VxlanInfo, payload []byte) error {
 		return err
 	}
 
-	_, err = udpSock.WriteTo(append(vxlanHdr, payload...), dst)
+	vxlanHdr = append(vxlanHdr, payload...)
+	fmt.Printf("vxlan payload: %v \n", vxlanHdr)
+
+	_, err = udpSock.WriteTo(vxlanHdr, dst)
 
 	return err
 }
@@ -155,11 +168,13 @@ func sendIpSocket(opts gopacket.SerializeOptions, ip *layers.IPv4, payload []byt
 	if err != nil {
 		return err
 	}
+	defer packetConn.Close()
 
 	rawConn, err = ipv4.NewRawConn(packetConn)
 	if err != nil {
 		return err
 	}
+	defer rawConn.Close()
 
 	err = rawConn.WriteTo(ipHeader, payload, nil)
 

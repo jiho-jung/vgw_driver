@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 
 	"github.com/spf13/cobra"
@@ -44,16 +45,8 @@ var cmdCtReset = &cobra.Command{
 }
 
 func init() {
-	cmdCt.PersistentFlags().IntP("zone", "z", -1, "zone id")
+	cmdCt.PersistentFlags().IntP("zone", "z", -1, "zone id, -1: use cli parameter, >=0: use ct")
 	viper.BindPFlag("zone", cmdCt.PersistentFlags().Lookup("zone"))
-
-	//cmdCtShow.Flags().IntP("zone", "z", -1, "zone id")
-	//cmdCtShow.Flags().StringP("req-id", "", "", "req-id")
-	/*
-		if err := viper.BindPFlags(cmdCt.Flags()); err != nil {
-			log.Errorf("failed to dump p-flags: %v", err)
-		}
-	*/
 
 	cmdCt.AddCommand(cmdCtShow)
 
@@ -61,11 +54,21 @@ func init() {
 
 	cmdCt.AddCommand(cmdCtAdd)
 
-	cmdCtReset.Flags().IntP("sport", "s", -1, "src port")
-	cmdCtReset.Flags().IntP("dport", "d", -1, "dst port")
-	cmdCtReset.Flags().IntP("vni", "v", -1, "VXLAN ID")
-	cmdCtReset.Flags().StringP("tunip", "t", "", "tunnel dest ip")
-	cmdCtReset.Flags().IntP("tunport", "p", 4789, "tunnel dst port")
+	// vxlan info
+	cmdCtReset.Flags().Uint32P("vni", "", 0, "VXLAN ID: >0: use vxlan tunnel")
+	cmdCtReset.Flags().StringP("tundst", "", "", "tunnel dest ip")
+	cmdCtReset.Flags().StringP("tunsrc", "", "", "tunnel dest ip")
+	cmdCtReset.Flags().Uint16P("tunport", "", 4789, "tunnel dst port")
+
+	// inner tcp info
+	cmdCtReset.Flags().StringP("smac", "", "", "inner src MAC addr")
+	cmdCtReset.Flags().StringP("dmac", "", "", "inner dst MAC addr")
+	cmdCtReset.Flags().StringP("sip", "", "", "inner src ip")
+	cmdCtReset.Flags().StringP("dip", "", "", "inner dest ip")
+	cmdCtReset.Flags().Uint16P("sport", "", 0, "src port")
+	cmdCtReset.Flags().Uint16P("dport", "", 0, "dst port")
+	cmdCtReset.Flags().Uint32P("seq", "", 0, "seq number")
+	cmdCtReset.Flags().Uint32P("ack", "", 0, "ack number")
 
 	if err := viper.BindPFlags(cmdCtReset.Flags()); err != nil {
 		log.Errorf("failed to dump p-flags: %v", err)
@@ -79,43 +82,156 @@ func init() {
 func runCmdCtReset(cmd *cobra.Command, args []string) {
 	log.Debugf("Reset Conntracks")
 
+	vni := viper.GetUint32("vni")
 	zone := viper.GetInt("zone")
-	sport := viper.GetInt("sport")
-	dport := viper.GetInt("dport")
-	vni := viper.GetInt("vni")
-	tunport := viper.GetInt("tunport")
+
+	var err error
+	var tcpInfo *TcpInfo
+	var vxlanInfo *VxlanInfo
+
+	if vni != 0 {
+		vxlanInfo, err = getVxLanInfo()
+		if err != nil {
+			log.Errorf("faled to get vxlaninfo: err=%v", err)
+			return
+		}
+	}
+
+	if zone == -1 {
+		tcpInfo, err = getTcpInfo()
+		if err != nil {
+			log.Errorf("failed to get tcpinfo: err=%v", err)
+			return
+		}
+	} else {
+		tcpInfo, err = getConntrack(zone)
+		if err != nil {
+			log.Errorf("failed to get ct: err=%v", err)
+			return
+		}
+	}
+
+	if tcpInfo == nil {
+		log.Errorf("no TcpInfo")
+		return
+	}
+
+	err = getInnerMac(tcpInfo)
+	if err != nil {
+		log.Errorf("failed to get inner mac: err=%v", err)
+		return
+	}
+
+	SendTcpReset(tcpInfo, vxlanInfo)
+}
+
+func getTcpInfo() (*TcpInfo, error) {
+	sip := viper.GetString("sip")
+	dip := viper.GetString("dip")
+	sport := viper.GetUint16("sport")
+	dport := viper.GetUint16("dport")
+
+	seq := viper.GetUint32("seq")
+	ack := viper.GetUint32("ack")
+
+	if len(sip) < 1 {
+		return nil, fmt.Errorf("src ip needed")
+	}
+
+	saddr, err := netip.ParseAddr(sip)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(dip) < 1 {
+		return nil, fmt.Errorf("dst ip needed")
+	}
+
+	daddr, err := netip.ParseAddr(dip)
+	if err != nil {
+		return nil, err
+	}
+
+	tcpInfo := &TcpInfo{
+		SrcIp:   saddr,
+		DstIp:   daddr,
+		SrcPort: sport,
+		DstPort: dport,
+		Seq:     seq,
+		Ack:     ack,
+	}
+
+	return tcpInfo, nil
+}
+
+func getVxLanInfo() (*VxlanInfo, error) {
+	vni := viper.GetUint32("vni")
+	tunport := viper.GetUint16("tunport")
 	tunip := viper.GetString("tunip")
 
 	var vxlanInfo *VxlanInfo
-	if vni != -1 {
-		if len(tunip) < 1 {
-			log.Errorf("Tunnel IP is needed: vni=%d", vni)
-			return
-		}
+	if vni == 0 {
+		return nil, nil
+	}
 
-		vxlanInfo = &VxlanInfo{
-			Vni:        uint32(vni),
-			TunDstIp:   tunip,
-			TunDstPort: uint16(tunport),
+	if len(tunip) < 1 {
+		return nil, fmt.Errorf("Tunnel IP is needed: vni=%d", vni)
+	}
+
+	vxlanInfo = &VxlanInfo{
+		Vni:        uint32(vni),
+		TunDstIp:   tunip,
+		TunDstPort: uint16(tunport),
+	}
+
+	return vxlanInfo, nil
+}
+
+func getInnerMac(tcpInfo *TcpInfo) error {
+	smac := viper.GetString("smac")
+	dmac := viper.GetString("smac")
+
+	if len(smac) > 1 {
+		smacAddr, err := net.ParseMAC(smac)
+		if err != nil {
+			return fmt.Errorf("failed to parse SDMAC: err=%v", err)
+		} else {
+			tcpInfo.SrcMAC = smacAddr
 		}
 	}
+
+	if len(dmac) > 1 {
+		dmacAddr, err := net.ParseMAC(dmac)
+		if err != nil {
+			return fmt.Errorf("failed to parse DDMAC: err=%v", err)
+		} else {
+			tcpInfo.DstMAC = dmacAddr
+		}
+	}
+
+	return nil
+}
+
+func getConntrack(zone int) (*TcpInfo, error) {
+	sport := viper.GetUint16("sport")
+	dport := viper.GetUint16("dport")
 
 	c, err := conntrack.Dial(nil)
 	if err != nil {
-		log.Fatalf("1. %s", err)
+		return nil, err
 	}
 
 	var f *conntrack.FilterZone
-	if zone != -1 {
-		f = &conntrack.FilterZone{
-			Zone: uint16(zone),
-		}
+	f = &conntrack.FilterZone{
+		Zone: uint16(zone),
 	}
 
 	cts, err := c.DumpFilter(f, nil)
 	if err != nil {
-		log.Fatalf("2. %s", err)
+		return nil, err
 	}
+
+	var tcpInfo *TcpInfo
 
 	var i int
 	for _, ct := range cts {
@@ -123,19 +239,36 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 			continue
 		} else if ct.TupleOrig.Proto.Protocol != 6 {
 			continue
-		} else if sport != -1 && ct.TupleOrig.Proto.SourcePort != uint16(sport) {
+		} else if sport != 0 && ct.TupleOrig.Proto.SourcePort != sport {
 			continue
-		} else if dport != -1 && ct.TupleOrig.Proto.DestinationPort != uint16(dport) {
+		} else if dport != 0 && ct.TupleOrig.Proto.DestinationPort != dport {
 			continue
 		}
 
 		fmt.Printf("CT(%d): %+v \n", i+1, ct)
 		fmt.Printf("  TCP: %+v \n", *ct.ProtoInfo.TCP)
+
 		if ct.ProtoInfo.TCP.SeqTrack != nil {
 			fmt.Printf("  TCP SEQ: %+v \n", *ct.ProtoInfo.TCP.SeqTrack)
-			tcpReset(&ct, vxlanInfo)
+			//tcpReset(&ct, vxlanInfo)
+
+			tuple := &ct.TupleOrig
+			seqTrk := ct.ProtoInfo.TCP.SeqTrack
+
+			tcpInfo = &TcpInfo{
+				SrcIp:   tuple.IP.DestinationAddress,
+				DstIp:   tuple.IP.SourceAddress,
+				SrcPort: tuple.Proto.DestinationPort,
+				DstPort: tuple.Proto.SourcePort,
+				Seq:     seqTrk.LastAck,
+				Ack:     seqTrk.LastSeq,
+			}
+
+			break
 		}
 	}
+
+	return tcpInfo, nil
 }
 
 func tcpReset(ct *conntrack.Flow, vxlanInfo *VxlanInfo) {
