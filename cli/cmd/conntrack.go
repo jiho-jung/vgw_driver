@@ -14,7 +14,7 @@ import (
 var cmdCt = &cobra.Command{
 	Use:     "conntrack",
 	Aliases: []string{"ct"},
-	Short:   "conntrack",
+	Short:   "Kernel conntrack",
 	Long:    `Kernel Conntrack `,
 }
 

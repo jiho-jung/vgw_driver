@@ -23,6 +23,15 @@ github.com/inconshreveable/mousetrap
 # github.com/josharian/native v1.1.0
 ## explicit; go 1.13
 github.com/josharian/native
+# github.com/klauspost/compress v1.17.4
+## explicit; go 1.19
+github.com/klauspost/compress
+github.com/klauspost/compress/fse
+github.com/klauspost/compress/huff0
+github.com/klauspost/compress/internal/cpuinfo
+github.com/klauspost/compress/internal/snapref
+github.com/klauspost/compress/zstd
+github.com/klauspost/compress/zstd/internal/xxhash
 # github.com/mdlayher/netlink v1.7.2
 ## explicit; go 1.18
 github.com/mdlayher/netlink
@@ -37,6 +46,10 @@ github.com/pelletier/go-toml/v2/internal/characters
 github.com/pelletier/go-toml/v2/internal/danger
 github.com/pelletier/go-toml/v2/internal/tracker
 github.com/pelletier/go-toml/v2/unstable
+# github.com/pierrec/lz4 v2.6.1+incompatible
+## explicit
+github.com/pierrec/lz4
+github.com/pierrec/lz4/internal/xxh32
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
@@ -77,12 +90,15 @@ github.com/subchen/go-log
 # github.com/subosito/gotenv v1.6.0
 ## explicit; go 1.18
 github.com/subosito/gotenv
-# github.com/ti-mo/conntrack v0.5.1 => /home/jiho.jung/src/conntrack
+# github.com/ti-mo/conntrack v0.5.1 => github.com/joyent/conntrack v0.5.2
 ## explicit; go 1.21
 github.com/ti-mo/conntrack
 # github.com/ti-mo/netfilter v0.5.2
 ## explicit; go 1.21
 github.com/ti-mo/netfilter
+# github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8
+## explicit
+github.com/xi2/xz
 # go.uber.org/atomic v1.9.0
 ## explicit; go 1.13
 go.uber.org/atomic
@@ -115,4 +131,10 @@ golang.org/x/text/unicode/norm
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# github.com/ti-mo/conntrack => /home/jiho.jung/src/conntrack
+# pault.ag/go/modprobe v0.2.0
+## explicit; go 1.15
+pault.ag/go/modprobe
+# pault.ag/go/topsort v0.1.1
+## explicit; go 1.16
+pault.ag/go/topsort
+# github.com/ti-mo/conntrack => github.com/joyent/conntrack v0.5.2
