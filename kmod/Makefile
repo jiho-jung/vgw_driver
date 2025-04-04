@@ -1,5 +1,5 @@
 CONFIG_MODULE_SIG=n
-MODULE_NAME=vgw-driver
+MODULE_NAME=vgw_driver
 
 ifneq ($(KERNELRELEASE),)
 
