@@ -57,7 +57,7 @@ func init() {
 	// vxlan info
 	cmdCtReset.Flags().Uint32P("vni", "", 0, "VXLAN ID: >0: use vxlan tunnel")
 	cmdCtReset.Flags().StringP("tundst", "", "", "tunnel dest ip")
-	cmdCtReset.Flags().StringP("tunsrc", "", "", "tunnel dest ip")
+	cmdCtReset.Flags().StringP("tunsrc", "", "", "tunnel src ip")
 	cmdCtReset.Flags().Uint16P("tunport", "", 4789, "tunnel dst port")
 
 	// inner tcp info
@@ -167,20 +167,26 @@ func getTcpInfo() (*TcpInfo, error) {
 func getVxLanInfo() (*VxlanInfo, error) {
 	vni := viper.GetUint32("vni")
 	tunport := viper.GetUint16("tunport")
-	tunip := viper.GetString("tunip")
+	tundst := viper.GetString("tundst")
+	tunsrc := viper.GetString("tunsrc")
 
 	var vxlanInfo *VxlanInfo
 	if vni == 0 {
 		return nil, nil
 	}
 
-	if len(tunip) < 1 {
-		return nil, fmt.Errorf("Tunnel IP is needed: vni=%d", vni)
+	if len(tundst) < 1 {
+		return nil, fmt.Errorf("Tunnel dst IP is needed: vni=%d", vni)
+	}
+
+	if len(tunsrc) < 1 {
+		return nil, fmt.Errorf("Tunnel src IP is needed: vni=%d", vni)
 	}
 
 	vxlanInfo = &VxlanInfo{
 		Vni:        uint32(vni),
-		TunDstIp:   tunip,
+		TunSrcIp:   tunsrc,
+		TunDstIp:   tundst,
 		TunDstPort: uint16(tunport),
 	}
 
