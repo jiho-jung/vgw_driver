@@ -3,6 +3,7 @@ module github.com/vgw_driver
 go 1.22.6
 
 require (
+	github.com/Djarvur/go-lsmod v0.0.0-20190124055245-f58e2c8a3519
 	github.com/google/gopacket v1.1.19
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	lsmod "github.com/Djarvur/go-lsmod"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/subchen/go-log"
@@ -39,6 +40,13 @@ var cmdModProbe = &cobra.Command{
 	Run:     runModProbe,
 }
 
+var cmdModList = &cobra.Command{
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "list module",
+	Run:     runModList,
+}
+
 func init() {
 	cmdMod.PersistentFlags().StringP("name", "n", "", "Kernel Module name")
 	cmdMod.PersistentFlags().StringP("path", "p", "", "Kernel Module path")
@@ -48,6 +56,7 @@ func init() {
 	cmdMod.AddCommand(cmdModLoad)
 	cmdMod.AddCommand(cmdModRemove)
 	cmdMod.AddCommand(cmdModProbe)
+	cmdMod.AddCommand(cmdModList)
 
 	RootCmd.AddCommand(cmdMod)
 }
@@ -57,6 +66,11 @@ func runModLoad(cmd *cobra.Command, args []string) {
 
 	kname := viper.GetString("name")
 	kpath := viper.GetString("path")
+
+	if len(kname) < 1 {
+		log.Errorf("Module name is empyt")
+		return
+	}
 
 	err := loadDriver(kpath, kname)
 	if err != nil {
@@ -69,6 +83,11 @@ func runModRemove(cmd *cobra.Command, args []string) {
 
 	kname := viper.GetString("name")
 
+	if len(kname) < 1 {
+		log.Errorf("Module name is empyt")
+		return
+	}
+
 	err := removeDriver(kname)
 	if err != nil {
 		log.Errorf("%v", err)
@@ -80,7 +99,27 @@ func runModProbe(cmd *cobra.Command, args []string) {
 
 	kname := viper.GetString("name")
 
+	if len(kname) < 1 {
+		log.Errorf("Module name is empyt")
+		return
+	}
+
 	err := probeDriver(kname)
+	if err != nil {
+		log.Errorf("%v", err)
+	}
+}
+
+func runModList(cmd *cobra.Command, args []string) {
+	log.Debugf("LIst Module")
+
+	kname := viper.GetString("name")
+	if len(kname) < 1 {
+		log.Errorf("Module name is empyt")
+		return
+	}
+
+	err := listDriver(kname)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
@@ -117,6 +156,28 @@ func probeDriver(kname string) error {
 	if err != nil {
 		return fmt.Errorf("failed to probe module file: name=%s, err=%s", kname, err)
 	}
+
+	return nil
+}
+
+func listDriver(kname string) error {
+	if len(kname) < 1 {
+		return fmt.Errorf("Module name is empyt")
+	}
+
+	mods, err := lsmod.LsMod()
+	if err != nil {
+		return fmt.Errorf("failed to list module info: err=%s", err)
+	}
+
+	//_, _ = lsmod.IsLoaded()
+
+	mod, ok := mods[kname]
+	if !ok {
+		return fmt.Errorf("No such module")
+	}
+
+	fmt.Printf("%s: %+v \n", kname, mod)
 
 	return nil
 }

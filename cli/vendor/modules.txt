@@ -1,3 +1,6 @@
+# github.com/Djarvur/go-lsmod v0.0.0-20190124055245-f58e2c8a3519
+## explicit
+github.com/Djarvur/go-lsmod
 # github.com/fsnotify/fsnotify v1.8.0
 ## explicit; go 1.17
 github.com/fsnotify/fsnotify
