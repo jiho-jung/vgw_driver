@@ -42,4 +42,4 @@ require (
 	pault.ag/go/topsort v0.1.1 // indirect
 )
 
-replace github.com/ti-mo/conntrack => github.com/joyent/conntrack v0.5.2
+replace github.com/ti-mo/conntrack => github.com/joyent/conntrack v0.5.3-0.20250407014621-4b383a5baecc

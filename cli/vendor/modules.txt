@@ -93,7 +93,7 @@ github.com/subchen/go-log
 # github.com/subosito/gotenv v1.6.0
 ## explicit; go 1.18
 github.com/subosito/gotenv
-# github.com/ti-mo/conntrack v0.5.1 => github.com/joyent/conntrack v0.5.2
+# github.com/ti-mo/conntrack v0.5.1 => github.com/joyent/conntrack v0.5.3-0.20250407014621-4b383a5baecc
 ## explicit; go 1.21
 github.com/ti-mo/conntrack
 # github.com/ti-mo/netfilter v0.5.2
@@ -140,4 +140,4 @@ pault.ag/go/modprobe
 # pault.ag/go/topsort v0.1.1
 ## explicit; go 1.16
 pault.ag/go/topsort
-# github.com/ti-mo/conntrack => github.com/joyent/conntrack v0.5.2
+# github.com/ti-mo/conntrack => github.com/joyent/conntrack v0.5.3-0.20250407014621-4b383a5baecc
