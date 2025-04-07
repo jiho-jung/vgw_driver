@@ -78,6 +78,36 @@ int vgw_update_tcp_state(struct nf_conn *ct)
 	return 0;
 }
 
+struct ip_ct_tcp_state_vgw {
+	u_int32_t	td_end;		/* max of seq + len */
+	u_int32_t	td_maxend;	/* max of ack + max(win, 1) */
+	u_int32_t	td_maxwin;	/* max(win) */
+	u_int32_t	td_maxack;	/* max of ack */
+	u_int8_t	td_scale;	/* window scale factor */
+	u_int8_t	flags;		/* per direction options */
+	u_int16_t	dummy;
+}; // 20 bytes
+
+struct ip_ct_tcp_vgw {
+	// 40 bytes
+	struct ip_ct_tcp_state_vgw seen[2];	/* connection parameters per direction */
+	//  24 bytes
+	u_int8_t	state;		/* state of the connection (enum tcp_conntrack) */
+	/* For detecting stale connections */
+	u_int8_t	last_dir;	/* Direction of the last packet (enum ip_conntrack_dir) */
+	u_int8_t	retrans;	/* Number of retransmitted packets */
+	u_int8_t	last_index;	/* Index of the last packet */
+	u_int32_t	last_seq;	/* Last sequence number seen in dir */
+	u_int32_t	last_ack;	/* Last sequence number seen in opposite dir */
+	u_int32_t	last_end;	/* Last seq + len */
+	u_int16_t	last_win;	/* Last window advertisement seen in dir */
+	/* For SYN packets while we may be out-of-sync */
+	u_int8_t	last_wscale;	/* Last window scaling factor seen */
+	u_int8_t	last_flags;	/* Last flags set */
+	u_int32_t   dummy;
+}; // 64 bytes
+
+#if 0
 struct ip_ct_tcp_seq_track {
 	// forward dir of seen
 	u_int32_t	td_end;		/* max of seq + len */
@@ -93,6 +123,7 @@ struct ip_ct_tcp_seq_track {
 	u_int8_t	last_wscale;/* Last window scaling factor seen */
 	u_int8_t    dummy;
 };
+#endif
 
 #define CTA_PROTOINFO_TCP_SEQ_TRACK __CTA_PROTOINFO_TCP_MAX
 
@@ -100,7 +131,8 @@ static int tcp_to_nlattr(struct sk_buff *skb, struct nlattr *nla, struct nf_conn
 {
 	struct nlattr *nest_parms;
 	struct nf_ct_tcp_flags tmp = {};
-	struct ip_ct_tcp_seq_track seq_trk = {};
+	//struct ip_ct_tcp_seq_track seq_trk = {};
+	struct ip_ct_tcp_vgw seq_trk = {};
 
 	spin_lock_bh(&ct->lock);
 	nest_parms = nla_nest_start(skb, CTA_PROTOINFO_TCP);
@@ -129,6 +161,7 @@ static int tcp_to_nlattr(struct sk_buff *skb, struct nlattr *nla, struct nf_conn
 		    sizeof(struct nf_ct_tcp_flags), &tmp))
 		goto nla_put_failure;
 
+#if 0
 	seq_trk.td_end = ct->proto.tcp.seen[0].td_end;
 	seq_trk.td_maxend = ct->proto.tcp.seen[0].td_maxend;
 	seq_trk.td_maxwin = ct->proto.tcp.seen[0].td_maxwin;
@@ -139,9 +172,31 @@ static int tcp_to_nlattr(struct sk_buff *skb, struct nlattr *nla, struct nf_conn
 	seq_trk.last_end = ct->proto.tcp.last_end;
 	seq_trk.last_win = ct->proto.tcp.last_win;
 	seq_trk.last_wscale = ct->proto.tcp.last_wscale;
+#endif
+
+	for (int i=0; i<2; i++) {
+		seq_trk.seen[i].td_end = ct->proto.tcp.seen[i].td_end;
+		seq_trk.seen[i].td_maxend = ct->proto.tcp.seen[i].td_maxend;
+		seq_trk.seen[i].td_maxwin = ct->proto.tcp.seen[i].td_maxwin;
+		seq_trk.seen[i].td_maxack = ct->proto.tcp.seen[i].td_maxack;
+		seq_trk.seen[i].td_scale = ct->proto.tcp.seen[i].td_scale;
+		seq_trk.seen[i].flags = ct->proto.tcp.seen[i].flags;
+	}
+
+	seq_trk.state = ct->proto.tcp.state;
+	seq_trk.last_dir = ct->proto.tcp.last_dir;
+	seq_trk.retrans = ct->proto.tcp.retrans;
+	seq_trk.last_index = ct->proto.tcp.last_index;
+	seq_trk.last_seq = ct->proto.tcp.last_seq;
+	seq_trk.last_ack = ct->proto.tcp.last_ack;
+	seq_trk.last_end = ct->proto.tcp.last_end;
+	seq_trk.last_win = ct->proto.tcp.last_win;
+	seq_trk.last_wscale = ct->proto.tcp.last_wscale;
+	seq_trk.last_flags = ct->proto.tcp.last_flags;
 
 	if (nla_put(skb, CTA_PROTOINFO_TCP_SEQ_TRACK,
-		    sizeof(struct ip_ct_tcp_seq_track), &seq_trk))
+		    //sizeof(struct ip_ct_tcp_seq_track), &seq_trk))
+		    sizeof(struct ip_ct_tcp_vgw), &seq_trk))
 		goto nla_put_failure;
 
 skip_state:
