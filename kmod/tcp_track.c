@@ -24,17 +24,17 @@
 
 // RW: /sys/module/vgw_driver/parameters/
 
-uint32_t enable_track_tcp_seq = 0;
-uint32_t track_flags = FLAGS_ZONE_FILTER;
+uint32_t enable_tcptrack = 0;
+uint32_t tcptrack_flags = FLAGS_ZONE_FILTER;
 
 // ovs port range in vgateway: 100 ~ 2099(2K)
 uint32_t zone_range[2] = {100, 2099}; // min,max
 
-module_param(enable_track_tcp_seq, uint, 0644);
-MODULE_PARM_DESC(enable_track_tcp_seq, "Enable tracking TCP SEQ/ACK");
+module_param(enable_tcptrack, uint, 0644);
+MODULE_PARM_DESC(enable_tcptrack, "Enable tracking TCP SEQ/ACK");
 
-module_param(track_flags, uint, 0644);
-MODULE_PARM_DESC(track_flags, "Flags of tracking");
+module_param(tcptrack_flags, uint, 0644);
+MODULE_PARM_DESC(tcptrack_flags, "Flags of tcptrack");
 
 module_param_array(zone_range, uint, NULL, 0644);
 MODULE_PARM_DESC(zone_range, "Zone Range to track TCP SEQ/ACK");
@@ -148,7 +148,7 @@ static bool check_zone(struct nf_conn *ct)
 	// NLB packets only
 	zone = nf_ct_zone_id(nf_ct_zone(ct), IP_CT_DIR_ORIGINAL);
 
-	if (!(track_flags & FLAGS_ZONE_FILTER)) {
+	if (!(tcptrack_flags & FLAGS_ZONE_FILTER)) {
 		return true;
 	} else if (zone_range[0] <= zone && zone <= zone_range[1]) {
 		return true;
@@ -157,7 +157,7 @@ static bool check_zone(struct nf_conn *ct)
 	return false;
 }
 
-static unsigned int vgw_hook_main(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
+static unsigned int vgw_tcptrack_main(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct = NULL;
@@ -166,7 +166,7 @@ static unsigned int vgw_hook_main(void *priv, struct sk_buff *skb, const struct 
 	const struct tcphdr *th;
 	struct tcphdr _tcph;
 
-	if (!enable_track_tcp_seq) {
+	if (!enable_tcptrack) {
 		return NF_ACCEPT;
 	}
 
@@ -215,7 +215,6 @@ static unsigned int vgw_hook_main(void *priv, struct sk_buff *skb, const struct 
 	spin_unlock_bh(&ct->lock);
 	////////////////////////////
 
-
 out:
 	// release it
 	//nf_conntrack_put(ct);
@@ -223,9 +222,9 @@ out:
 	return ret;
 }
 
-struct nf_hook_ops input_hook_ops = {
+struct nf_hook_ops tcptrack_hook_ops = {
 	.hooknum = NF_INET_LOCAL_IN,
-	.hook = vgw_hook_main,
+	.hook = vgw_tcptrack_main,
 	.pf = PF_INET,
 
 	//.priority = NF_IP_PRI_FILTER + 1};
@@ -233,19 +232,19 @@ struct nf_hook_ops input_hook_ops = {
 };
 
 
-int vgw_conntrack_init(void) 
+int vgw_tcptrack_init(void) 
 {
-	pr_info("Init VGW Conntrack Module: %s\n", VERSION_STRING);
+	pr_info("Init VGW tcptrack Module: %s\n", VERSION_STRING);
 
-	nf_register_net_hook(&init_net,&input_hook_ops);
+	nf_register_net_hook(&init_net,&tcptrack_hook_ops);
 
 	return 0;
 }
 
-void vgw_conntrack_exit(void)
+void vgw_tcptrack_exit(void)
 {
-	pr_info("Exit VGW Conntrack Module: %s\n", VERSION_STRING);
+	pr_info("Exit VGW tcptrack Module: %s\n", VERSION_STRING);
 
-	nf_unregister_net_hook(&init_net, &input_hook_ops);
+	nf_unregister_net_hook(&init_net, &tcptrack_hook_ops);
 }
 
