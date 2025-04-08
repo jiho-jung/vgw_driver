@@ -58,6 +58,9 @@
 #include "tcp_session.h"
 #include "vgw_version.h"
 
+int vgw_conntrack_init(void);
+void vgw_conntrack_exit(void);
+
 // 2025.3.
 // copied from linux-5.14.0-362.8.1.el9_3/net/netfilter/nf_conntrack_netlink.c
 
@@ -3906,6 +3909,12 @@ static int __init ctnetlink_init(void)
 {
 	int ret;
 
+	ret = vgw_conntrack_init();
+	if (ret < 0) {
+		pr_err("ctnetlink_init: cannot register with vgw conntrack module.\n");
+		goto err_out;
+	}
+
 	pr_info("Init VGW Netlink Module: %s\n", VERSION_STRING);
 
 	NL_ASSERT_DUMP_CTX_FITS(struct ctnetlink_list_dump_ctx);
@@ -3943,6 +3952,8 @@ err_out:
 
 static void __exit ctnetlink_exit(void)
 {
+	vgw_conntrack_exit();
+
 	unregister_pernet_subsys(&ctnetlink_net_ops);
 	nfnetlink_subsys_unregister(&ctnl_exp_subsys);
 	nfnetlink_subsys_unregister(&ctnl_subsys);
@@ -3951,7 +3962,7 @@ static void __exit ctnetlink_exit(void)
 #endif
 	synchronize_rcu();
 
-	pr_info("exit VGW Netlink Module: %s\n", VERSION_STRING);
+	pr_info("Exit VGW Netlink Module: %s\n", VERSION_STRING);
 }
 
 module_init(ctnetlink_init);
