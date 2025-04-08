@@ -13,20 +13,31 @@
 #include <net/netfilter/nf_nat_helper.h>
 #include <net/netfilter/nf_conntrack_seqadj.h>
 #include <net/tcp.h>
+#include <linux/moduleparam.h>
+
 
 #include "vgw_version.h"
 
 ////////////////////////
 
-#define FLAGS_ENABLE_ZONE_FILTER 0x01
+#define FLAGS_ZONE_FILTER 0x01
 
-// RW: /sys/modules/vgw_driver/parameters/running_flags
+// RW: /sys/module/vgw_driver/parameters/
 
-uint32_t enable_service = 0;
-uint32_t running_flags = FLAGS_ENABLE_ZONE_FILTER;
+uint32_t enable_track_tcp_seq = 0;
+uint32_t track_flags = FLAGS_ZONE_FILTER;
 
-module_param(enable_service, uint, 0644);
-module_param(running_flags, uint, 0644);
+// ovs port range in vgateway: 100 ~ 2099(2K)
+uint32_t zone_range[2] = {100, 2099}; // min,max
+
+module_param(enable_track_tcp_seq, uint, 0644);
+MODULE_PARM_DESC(enable_track_tcp_seq, "Enable tracking TCP SEQ/ACK");
+
+module_param(track_flags, uint, 0644);
+MODULE_PARM_DESC(track_flags, "Flags of tracking");
+
+module_param_array(zone_range, uint, NULL, 0644);
+MODULE_PARM_DESC(zone_range, "Zone Range to track TCP SEQ/ACK");
 
 /////////////////////////////////////
 
@@ -38,12 +49,6 @@ static struct nf_conn *get_conntrack(struct sk_buff *skb, enum ip_conntrack_info
 	if (ct == NULL || *ctinfo == IP_CT_UNTRACKED) {
 		return NULL;
 	}
-
-	/*
-	if (nf_ct_is_untracked(ct)) {
-	return NULL;
-	}
-	*/
 
 	return ct;
 }
@@ -107,15 +112,49 @@ static bool tcp_error(const struct tcphdr *th,
 	return false;
 }
 
-void dump_ip_tuple(const struct nf_conntrack_tuple *t, const struct tcphdr *th)
+static inline __u32 segment_seq_plus_len(__u32 seq,
+					 size_t len,
+					 unsigned int dataoff,
+					 const struct tcphdr *tcph)
 {
+	/* XXX Should I use payload length field in IP/IPv6 header ?
+	 * - YK */
+	return (seq + len - dataoff - tcph->doff*4
+		+ (tcph->syn ? 1 : 0) + (tcph->fin ? 1 : 0));
+}
+
+
+void dump_ip_tuple(struct nf_conn *ct, enum ip_conntrack_info ctinfo, const struct tcphdr *th)
+{
+	const struct nf_conntrack_tuple *t;
+	enum ip_conntrack_dir dir;
+
+	dir = CTINFO2DIR(ctinfo);
+	t = &ct->tuplehash[dir].tuple;
+
 	printk("tuple %p: %u %pI4:%hu -> %pI4:%hu syn=%i(%u) ack=%i(%u) fin=%i rst=%i\n",
-			 t, t->dst.protonum,
-			 &t->src.u3.ip, ntohs(t->src.u.all),
-			 &t->dst.u3.ip, ntohs(t->dst.u.all),
-			 (th->syn ? 1 : 0), ntohl(th->seq),
-			 (th->ack ? 1 : 0), ntohl(th->ack_seq),
-			 (th->fin ? 1 : 0), (th->rst ? 1 : 0));
+		   t, t->dst.protonum,
+		   &t->src.u3.ip, ntohs(t->src.u.all),
+		   &t->dst.u3.ip, ntohs(t->dst.u.all),
+		   (th->syn ? 1 : 0), ntohl(th->seq),
+		   (th->ack ? 1 : 0), ntohl(th->ack_seq),
+		   (th->fin ? 1 : 0), (th->rst ? 1 : 0));
+}
+
+static bool check_zone(struct nf_conn *ct)
+{
+	uint16_t zone;
+
+	// NLB packets only
+	zone = nf_ct_zone_id(nf_ct_zone(ct), IP_CT_DIR_ORIGINAL);
+
+	if (!(track_flags & FLAGS_ZONE_FILTER)) {
+		return true;
+	} else if (zone_range[0] <= zone && zone <= zone_range[1]) {
+		return true;
+	}
+
+	return false;
 }
 
 static unsigned int vgw_hook_main(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
@@ -126,30 +165,25 @@ static unsigned int vgw_hook_main(void *priv, struct sk_buff *skb, const struct 
 	u_int8_t protonum;
 	const struct tcphdr *th;
 	struct tcphdr _tcph;
-	uint16_t zone;
-	struct nf_conntrack_tuple *tuple;
-	enum ip_conntrack_dir dir;
 
-	if (!enable_service) {
+	if (!enable_track_tcp_seq) {
 		return NF_ACCEPT;
 	}
 
 	ct = get_conntrack(skb, &ctinfo);
 	if (ct == NULL) {
-		return ret;
+		return NF_ACCEPT;
 	}
 
 	// NLB packets only
-	zone = nf_ct_zone_id(nf_ct_zone(ct), IP_CT_DIR_ORIGINAL);
-	if ((running_flags & FLAGS_ENABLE_ZONE_FILTER) && 
-		zone == NF_CT_DEFAULT_ZONE_ID) {
-		goto out;
+	if (!check_zone(ct)) {
+		return NF_ACCEPT;
 	}
 
 	// TCP only
 	protonum = nf_ct_protonum(ct);
 	if (protonum != IPPROTO_TCP) {
-		goto out;
+		return NF_ACCEPT;
 	}
 
 	// hold the ct
@@ -172,20 +206,21 @@ static unsigned int vgw_hook_main(void *priv, struct sk_buff *skb, const struct 
 	spin_lock_bh(&ct->lock);
 
 	// XXX: set seq/ack
-	//tmp.flags = ct->proto.tcp.seen[0].flags;
+	ct->proto.tcp.last_seq = ntohl(th->seq);
+	ct->proto.tcp.last_ack = ntohl(th->ack_seq);
+	ct->proto.tcp.last_end = segment_seq_plus_len(ntohl(th->seq), skb->len, dataoff, th);
 
-	dir = CTINFO2DIR(ctinfo);
-	tuple = &ct->tuplehash[dir].tuple;
-	dump_ip_tuple(tuple, th);
+	//dump_ip_tuple(ct, ctinfo, th);
 
 	spin_unlock_bh(&ct->lock);
-	/////////////////////
+	////////////////////////////
+
 
 out:
 	// release it
 	//nf_conntrack_put(ct);
 
-	return NF_ACCEPT;
+	return ret;
 }
 
 struct nf_hook_ops input_hook_ops = {
