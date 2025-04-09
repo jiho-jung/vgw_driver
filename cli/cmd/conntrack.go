@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/netip"
 
@@ -44,6 +45,12 @@ var cmdCtReset = &cobra.Command{
 	Run:   runCmdCtReset,
 }
 
+var cmdCtTrackTcp = &cobra.Command{
+	Use:   "track",
+	Short: "track tcp seq/ack",
+	Run:   runCmdCtTrackTcp,
+}
+
 func init() {
 	cmdCt.PersistentFlags().IntP("zone", "z", -1, "zone id, -1: use cli parameter, >=0: use ct")
 	viper.BindPFlag("zone", cmdCt.PersistentFlags().Lookup("zone"))
@@ -74,6 +81,12 @@ func init() {
 		log.Errorf("failed to dump p-flags: %v", err)
 	}
 	cmdCt.AddCommand(cmdCtReset)
+
+	cmdCtTrackTcp.Flags().IntP("value", "", -1, "set track tcp seq/ack, -1: show")
+	if err := viper.BindPFlags(cmdCtTrackTcp.Flags()); err != nil {
+		log.Errorf("failed to dump p-flags: %v", err)
+	}
+	cmdCt.AddCommand(cmdCtTrackTcp)
 
 	// ct root cmd
 	RootCmd.AddCommand(cmdCt)
@@ -301,7 +314,8 @@ func runCmdCtShow(cmd *cobra.Command, args []string) {
 
 	c, err := conntrack.Dial(nil)
 	if err != nil {
-		log.Fatalf("1. %s", err)
+		log.Errorf("1. %s", err)
+		return
 	}
 
 	var f *conntrack.FilterZone
@@ -313,7 +327,8 @@ func runCmdCtShow(cmd *cobra.Command, args []string) {
 
 	cts, err := c.DumpFilter(f, nil)
 	if err != nil {
-		log.Fatalf("2. %s", err)
+		log.Errorf("2. %s", err)
+		return
 	}
 
 	var i int
@@ -333,7 +348,8 @@ func runCmdCtAdd(cmd *cobra.Command, args []string) {
 
 	c, err := conntrack.Dial(nil)
 	if err != nil {
-		log.Fatal(err)
+		log.Errorf("failed to add ct: err=%v", err)
+		return
 	}
 
 	zone := viper.GetInt("zone")
@@ -371,12 +387,58 @@ func runCmdCtFlush(cmd *cobra.Command, args []string) {
 	// Open a Conntrack connection.
 	c, err := conntrack.Dial(nil)
 	if err != nil {
-		log.Fatal(err)
+		log.Errorf("failed to flush ct: err=%v", err)
+		return
 	}
 
 	// Evict all entries from the conntrack table in the current network namespace.
 	err = c.FlushFilter(f)
 	if err != nil {
-		log.Fatal(err)
+		log.Errorf("failed to flush ct with filter: err=%v", err)
+		return
 	}
+}
+
+func runCmdCtTrackTcp(cmd *cobra.Command, args []string) {
+	log.Debugf("Set Track TCP SEQ/ACK")
+
+	fname := "/sys/module/vgw_driver/parameters/enable_tcptrack"
+	value := viper.GetInt("value")
+
+	if value == -1 {
+		v, err := readSysfs(fname)
+		if err != nil {
+			log.Errorf("failed to read fs: filename=%s, err=%v", fname, err)
+			return
+		}
+
+		fmt.Printf("%s:%s \n", fname, v)
+	} else if value == 1 {
+		err := writeSysfs(fname, "1")
+		if err != nil {
+			log.Errorf("failed to write fs: filename=%s, err=%v", fname, err)
+			return
+		}
+	} else if value == 0 {
+		err := writeSysfs(fname, "0")
+		if err != nil {
+			log.Errorf("failed to write fs: filename=%s, err=%v", fname, err)
+			return
+		}
+	} else {
+		log.Errorf("not supported value: value=%d", value)
+	}
+}
+
+func writeSysfs(filename string, data string) error {
+	return ioutil.WriteFile(filename, []byte(data), 644)
+}
+
+func readSysfs(filename string) (string, error) {
+	byts, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return "", err
+	}
+
+	return string(byts), nil
 }
