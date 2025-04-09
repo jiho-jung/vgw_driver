@@ -60,6 +60,7 @@
 
 int vgw_tcptrack_init(void);
 void vgw_tcptrack_exit(void);
+bool check_zone(struct nf_conn *ct);
 
 // 2025.3.
 // copied from linux-5.14.0-362.8.1.el9_3/net/netfilter/nf_conntrack_netlink.c
@@ -762,10 +763,15 @@ ctnetlink_conntrack_event(unsigned int events, const struct nf_ct_event *item)
 		return 0;
 
 	zone = nf_ct_zone(ct);
-	if (zone != NULL && 
-		group == NFNLGRP_CONNTRACK_NEW && 
-		zone->id == NF_CT_DEFAULT_ZONE_ID) {
+	if (zone != NULL && group == NFNLGRP_CONNTRACK_NEW && check_zone(ct)) {
+		printk("### vgw_driver: update ct state \n");
 		vgw_update_tcp_state(ct);
+	} else if (zone != NULL && group == NFNLGRP_CONNTRACK_UPDATE) {
+		skb = nlmsg_new(ctnetlink_nlmsg_size(ct), GFP_ATOMIC);
+		if (skb != NULL) {
+			printk("### vgw_driver: update tcp seq/ack \n");
+			//vgw_tcptrack_main(skb);
+		}
 	}
 
 	net = nf_ct_net(ct);
@@ -3909,11 +3915,13 @@ static int __init ctnetlink_init(void)
 {
 	int ret;
 
+	/*
 	ret = vgw_tcptrack_init();
 	if (ret < 0) {
 		pr_err("ctnetlink_init: cannot register with vgw conntrack module.\n");
 		goto err_out;
 	}
+	*/
 
 	pr_info("Init VGW Netlink Module: %s\n", VERSION_STRING);
 
@@ -3952,7 +3960,7 @@ err_out:
 
 static void __exit ctnetlink_exit(void)
 {
-	vgw_tcptrack_exit();
+	//vgw_tcptrack_exit();
 
 	unregister_pernet_subsys(&ctnetlink_net_ops);
 	nfnetlink_subsys_unregister(&ctnl_exp_subsys);

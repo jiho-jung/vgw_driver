@@ -82,6 +82,7 @@ static int ipv4_get_l4proto(const struct sk_buff *skb, unsigned int nhoff,
 	return dataoff;
 }
 
+#if 0
 static int get_l4proto(const struct sk_buff *skb, unsigned int nhoff, u8 pf, u8 *l4num) 
 {
 	switch (pf) {
@@ -94,12 +95,12 @@ static int get_l4proto(const struct sk_buff *skb, unsigned int nhoff, u8 pf, u8 
 	}
 	return -1;
 }
+#endif
 
 /* Protect conntrack agaist broken packets. Code taken from ipt_unclean.c.  */
 static bool tcp_error(const struct tcphdr *th,
 		      struct sk_buff *skb,
-		      unsigned int dataoff,
-		      const struct nf_hook_state *state)
+		      unsigned int dataoff) 
 {
 	unsigned int tcplen = skb->len - dataoff;
 
@@ -132,8 +133,8 @@ void dump_ip_tuple(struct nf_conn *ct, enum ip_conntrack_info ctinfo, const stru
 	dir = CTINFO2DIR(ctinfo);
 	t = &ct->tuplehash[dir].tuple;
 
-	printk("tuple %p: %u %pI4:%hu -> %pI4:%hu syn=%i(%u) ack=%i(%u) fin=%i rst=%i\n",
-		   t, t->dst.protonum,
+	printk("### tcptrack tuple: %u %pI4:%hu -> %pI4:%hu syn=%i(%u) ack=%i(%u) fin=%i rst=%i\n",
+		   t->dst.protonum,
 		   &t->src.u3.ip, ntohs(t->src.u.all),
 		   &t->dst.u3.ip, ntohs(t->dst.u.all),
 		   (th->syn ? 1 : 0), ntohl(th->seq),
@@ -141,7 +142,7 @@ void dump_ip_tuple(struct nf_conn *ct, enum ip_conntrack_info ctinfo, const stru
 		   (th->fin ? 1 : 0), (th->rst ? 1 : 0));
 }
 
-static bool check_zone(struct nf_conn *ct)
+bool check_zone(struct nf_conn *ct)
 {
 	uint16_t zone;
 
@@ -157,7 +158,7 @@ static bool check_zone(struct nf_conn *ct)
 	return false;
 }
 
-static unsigned int vgw_tcptrack_main(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
+unsigned int vgw_tcptrack_main(struct sk_buff *skb)
 {
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct = NULL;
@@ -172,6 +173,7 @@ static unsigned int vgw_tcptrack_main(void *priv, struct sk_buff *skb, const str
 
 	ct = get_conntrack(skb, &ctinfo);
 	if (ct == NULL) {
+		printk("### tcptack: no ct \n");
 		return NF_ACCEPT;
 	}
 
@@ -183,24 +185,30 @@ static unsigned int vgw_tcptrack_main(void *priv, struct sk_buff *skb, const str
 	// TCP only
 	protonum = nf_ct_protonum(ct);
 	if (protonum != IPPROTO_TCP) {
+		printk("### tcptack: not tcp \n");
 		return NF_ACCEPT;
 	}
 
 	// hold the ct
 	//nf_conntrack_get(&ct->ct_general);
 
-	dataoff = get_l4proto(skb, skb_network_offset(skb), state->pf, &protonum);
+	//dataoff = get_l4proto(skb, skb_network_offset(skb), state->pf, &protonum);
+	dataoff = ipv4_get_l4proto(skb, skb_network_offset(skb), &protonum);
 	if (dataoff <= 0) {
-		pr_debug("not prepared to track yet or error occurred\n");
+		printk("### tcptrack: not prepared to track yet or error occurred\n");
 		goto out;
 	}
 
 	th = skb_header_pointer(skb, dataoff, sizeof(_tcph), &_tcph);
-	if (th == NULL)
+	if (th == NULL) {
+		printk("### tcptack: no tcp hdr \n");
 		goto out;
+	}
 
-	if (tcp_error(th, skb, dataoff, state))
+	if (tcp_error(th, skb, dataoff)) {
+		printk("### tcptack: tcp err \n");
 		goto out;
+	}
 
 	/////////////////////
 	spin_lock_bh(&ct->lock);
@@ -210,7 +218,7 @@ static unsigned int vgw_tcptrack_main(void *priv, struct sk_buff *skb, const str
 	ct->proto.tcp.last_ack = ntohl(th->ack_seq);
 	ct->proto.tcp.last_end = segment_seq_plus_len(ntohl(th->seq), skb->len, dataoff, th);
 
-	//dump_ip_tuple(ct, ctinfo, th);
+	dump_ip_tuple(ct, ctinfo, th);
 
 	spin_unlock_bh(&ct->lock);
 	////////////////////////////
@@ -222,9 +230,18 @@ out:
 	return ret;
 }
 
+static unsigned int vgw_tcptrack_hook(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
+{
+	if (state->pf != NFPROTO_IPV4) {
+		return NF_ACCEPT;
+	}
+
+	return vgw_tcptrack_main(skb);
+}
+
 struct nf_hook_ops tcptrack_hook_ops = {
 	.hooknum = NF_INET_LOCAL_IN,
-	.hook = vgw_tcptrack_main,
+	.hook = vgw_tcptrack_hook,
 	.pf = PF_INET,
 
 	//.priority = NF_IP_PRI_FILTER + 1};
