@@ -1,15 +1,16 @@
 module github.com/vgw_driver
 
-go 1.22.6
+go 1.24.2
 
 require (
 	github.com/Djarvur/go-lsmod v0.0.0-20190124055245-f58e2c8a3519
+	github.com/cilium/ebpf v0.18.0
 	github.com/google/gopacket v1.1.19
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	github.com/subchen/go-log v3.0.0+incompatible
 	github.com/ti-mo/conntrack v0.5.1
-	golang.org/x/net v0.33.0
+	golang.org/x/net v0.36.0
 	pault.ag/go/modprobe v0.2.0
 )
 
@@ -35,9 +36,9 @@ require (
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/sync v0.11.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	pault.ag/go/topsort v0.1.1 // indirect
 )

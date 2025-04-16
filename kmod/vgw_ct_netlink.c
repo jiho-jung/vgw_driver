@@ -762,9 +762,10 @@ ctnetlink_conntrack_event(unsigned int events, const struct nf_ct_event *item)
 	} else
 		return 0;
 
+	/*
 	zone = nf_ct_zone(ct);
 	if (zone != NULL && group == NFNLGRP_CONNTRACK_NEW && check_zone(ct)) {
-		printk("### vgw_driver: update ct state \n");
+		printk("### vgw_driver: new ct state \n");
 		vgw_update_tcp_state(ct);
 	} else if (zone != NULL && group == NFNLGRP_CONNTRACK_UPDATE) {
 		skb = nlmsg_new(ctnetlink_nlmsg_size(ct), GFP_ATOMIC);
@@ -773,6 +774,7 @@ ctnetlink_conntrack_event(unsigned int events, const struct nf_ct_event *item)
 			//vgw_tcptrack_main(skb);
 		}
 	}
+	*/
 
 	net = nf_ct_net(ct);
 	if (!item->report && !nfnetlink_has_listeners(net, group))
@@ -3915,13 +3917,11 @@ static int __init ctnetlink_init(void)
 {
 	int ret;
 
-	/*
 	ret = vgw_tcptrack_init();
 	if (ret < 0) {
 		pr_err("ctnetlink_init: cannot register with vgw conntrack module.\n");
 		goto err_out;
 	}
-	*/
 
 	pr_info("Init VGW Netlink Module: %s\n", VERSION_STRING);
 
@@ -3960,7 +3960,7 @@ err_out:
 
 static void __exit ctnetlink_exit(void)
 {
-	//vgw_tcptrack_exit();
+	vgw_tcptrack_exit();
 
 	unregister_pernet_subsys(&ctnetlink_net_ops);
 	nfnetlink_subsys_unregister(&ctnl_exp_subsys);

@@ -12,9 +12,22 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_nat_helper.h>
 #include <net/netfilter/nf_conntrack_seqadj.h>
+#include <net/netfilter/nf_tables.h>
 #include <net/tcp.h>
 #include <linux/moduleparam.h>
 
+#include <linux/bpf_verifier.h>
+#include <linux/bpf.h>
+#include <linux/btf.h>
+#include <linux/filter.h>
+#include <linux/mutex.h>
+#include <linux/types.h>
+#include <linux/btf_ids.h>
+#include <linux/net_namespace.h>
+#include <net/netfilter/nf_conntrack_bpf.h>
+#include <net/netfilter/nf_conntrack_core.h>
+
+//#include <linux/openvswitch.h>
 
 #include "vgw_version.h"
 
@@ -24,7 +37,7 @@
 
 // RW: /sys/module/vgw_driver/parameters/
 
-uint32_t enable_tcptrack = 0;
+uint32_t enable_tcptrack = 1;
 uint32_t tcptrack_flags = FLAGS_ZONE_FILTER;
 
 // ovs port range in vgateway: 100 ~ 2099(2K)
@@ -41,7 +54,8 @@ MODULE_PARM_DESC(zone_range, "Zone Range to track TCP SEQ/ACK");
 
 /////////////////////////////////////
 
-static struct nf_conn *get_conntrack(struct sk_buff *skb, enum ip_conntrack_info *ctinfo) 
+static __always_inline struct nf_conn* 
+get_conntrack(struct sk_buff *skb, enum ip_conntrack_info *ctinfo) 
 {
 	struct nf_conn *ct = NULL;
 
@@ -53,8 +67,50 @@ static struct nf_conn *get_conntrack(struct sk_buff *skb, enum ip_conntrack_info
 	return ct;
 }
 
-static int ipv4_get_l4proto(const struct sk_buff *skb, unsigned int nhoff,
-			    u_int8_t *protonum)
+__always_inline static struct nf_conn* 
+lookup_conntrack(struct net *net, const struct nf_conntrack_zone *zone, u8 l3num, struct sk_buff *skb, bool natted)
+{
+	struct nf_conntrack_tuple tuple;
+	struct nf_conntrack_tuple_hash *h;
+	struct nf_conn *ct;
+
+	if (!nf_ct_get_tuplepr(skb, skb_network_offset(skb), l3num, net, &tuple)) {
+		printk("lookup_conntrack: Can't get tuple\n");
+		return NULL;
+	}
+
+	/* Must invert the tuple if skb has been transformed by NAT. */
+	if (natted) {
+		struct nf_conntrack_tuple inverse;
+
+		if (!nf_ct_invert_tuple(&inverse, &tuple)) {
+			printk("lookup_conntrack: Inversion failed!\n");
+			return NULL;
+		}
+		tuple = inverse;
+	}
+
+	/* look for tuple match */
+	h = nf_conntrack_find_get(net, zone, &tuple);
+	if (!h)
+		return NULL;   /* Not found. */
+
+	ct = nf_ct_tuplehash_to_ctrack(h);
+
+	/* Inverted packet tuple matches the reverse direction conntrack tuple,
+	 * select the other tuplehash to get the right 'ctinfo' bits for this
+	 * packet.
+	 */
+	if (natted)
+		h = &ct->tuplehash[!h->tuple.dst.dir];
+
+	//nf_ct_set(skb, ct, ovs_ct_get_info(h));
+	return ct;
+}
+
+
+static __always_inline  int
+ipv4_get_l4proto(const struct sk_buff *skb, unsigned int nhoff, u_int8_t *protonum)
 {
 	int dataoff = -1;
 	const struct iphdr *iph;
@@ -83,7 +139,8 @@ static int ipv4_get_l4proto(const struct sk_buff *skb, unsigned int nhoff,
 }
 
 #if 0
-static int get_l4proto(const struct sk_buff *skb, unsigned int nhoff, u8 pf, u8 *l4num) 
+static __always_inline int
+get_l4proto(const struct sk_buff *skb, unsigned int nhoff, u8 pf, u8 *l4num) 
 {
 	switch (pf) {
 	case NFPROTO_IPV4:
@@ -98,9 +155,8 @@ static int get_l4proto(const struct sk_buff *skb, unsigned int nhoff, u8 pf, u8 
 #endif
 
 /* Protect conntrack agaist broken packets. Code taken from ipt_unclean.c.  */
-static bool tcp_error(const struct tcphdr *th,
-		      struct sk_buff *skb,
-		      unsigned int dataoff) 
+static __always_inline bool
+tcp_error(const struct tcphdr *th, struct sk_buff *skb, unsigned int dataoff) 
 {
 	unsigned int tcplen = skb->len - dataoff;
 
@@ -113,10 +169,8 @@ static bool tcp_error(const struct tcphdr *th,
 	return false;
 }
 
-static inline __u32 segment_seq_plus_len(__u32 seq,
-					 size_t len,
-					 unsigned int dataoff,
-					 const struct tcphdr *tcph)
+static __always_inline  __u32
+segment_seq_plus_len(__u32 seq, size_t len, unsigned int dataoff, const struct tcphdr *tcph)
 {
 	/* XXX Should I use payload length field in IP/IPv6 header ?
 	 * - YK */
@@ -125,7 +179,8 @@ static inline __u32 segment_seq_plus_len(__u32 seq,
 }
 
 
-void dump_ip_tuple(struct nf_conn *ct, enum ip_conntrack_info ctinfo, const struct tcphdr *th)
+static __always_inline void
+dump_ip_tuple(struct nf_conn *ct, enum ip_conntrack_info ctinfo, const struct tcphdr *th)
 {
 	const struct nf_conntrack_tuple *t;
 	enum ip_conntrack_dir dir;
@@ -142,36 +197,127 @@ void dump_ip_tuple(struct nf_conn *ct, enum ip_conntrack_info ctinfo, const stru
 		   (th->fin ? 1 : 0), (th->rst ? 1 : 0));
 }
 
-bool check_zone(struct nf_conn *ct)
+static __always_inline void
+dump_skb(const struct sk_buff *skb, int ctst, u16 zone)
 {
-	uint16_t zone;
+	u_int8_t protonum;
+	const struct iphdr *iph;
+	struct iphdr _iph;
+	int nhoff = skb_network_offset(skb);
+	const struct tcphdr *th;
+	struct tcphdr _tcph;
+	int dataoff;
+
+	iph = skb_header_pointer(skb, nhoff, sizeof(_iph), &_iph);
+	if (!iph) {
+		printk("### tcptrack: no ip hdr \n");
+		return;
+	}
+
+	dataoff = ipv4_get_l4proto(skb, nhoff, &protonum);
+	if (dataoff <= 0) {
+		printk("### tcptrack: not prepared to track yet or error occurred\n");
+		return;
+	}
+
+	th = skb_header_pointer(skb, dataoff, sizeof(_tcph), &_tcph);
+	if (th == NULL) {
+		printk("### tcptack: no tcp hdr \n");
+		return;
+	}
+
+	printk("### tcptrack skb: %u %pI4:%hu -> %pI4:%hu syn=%i(%u) ack=%i(%u) fin=%i rst=%i, dev=%s(%d)\n",
+		   protonum,
+		   &iph->saddr, ntohs(th->source),
+		   &iph->daddr, ntohs(th->dest),
+		   (th->syn ? 1 : 0), ntohl(th->seq),
+		   (th->ack ? 1 : 0), ntohl(th->ack_seq),
+		   (th->fin ? 1 : 0), (th->rst ? 1 : 0),
+		   skb->dev ? skb->dev->name : "no dev", zone);
+}
+
+static bool check_zone(struct nf_conn *ct)
+{
+	uint16_t zone_id;
 
 	// NLB packets only
-	zone = nf_ct_zone_id(nf_ct_zone(ct), IP_CT_DIR_ORIGINAL);
+	zone_id = nf_ct_zone_id(nf_ct_zone(ct), IP_CT_DIR_ORIGINAL);
+
+	/*
+	const struct nf_conntrack_zone* zone = nf_ct_zone(ct);
+	if (zone != NULL) {
+		printk("### tcptack: zone id=%d, dir=%d, flags=0x%x \n", zone->id, zone->dir, zone->flags);
+	} else {
+		printk("### tcptack: zone id=%d, zone nil \n", zone_id);
+	}
+	*/
 
 	if (!(tcptrack_flags & FLAGS_ZONE_FILTER)) {
 		return true;
-	} else if (zone_range[0] <= zone && zone <= zone_range[1]) {
+	} else if (zone_range[0] <= zone_id && zone_id <= zone_range[1]) {
 		return true;
 	}
 
 	return false;
 }
 
-unsigned int vgw_tcptrack_main(struct sk_buff *skb)
+static __always_inline unsigned int
+vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family)
 {
-	enum ip_conntrack_info ctinfo;
+	enum ip_conntrack_info ctinfo = 0;
 	struct nf_conn *ct = NULL;
 	int dataoff, ret = NF_ACCEPT;
 	u_int8_t protonum;
+	const struct iphdr *iph;
+	struct iphdr _iph;
 	const struct tcphdr *th;
 	struct tcphdr _tcph;
+	int nhoff = skb_network_offset(skb);
+	struct nf_conntrack_zone zone;
+	uint32_t last_ack;
 
 	if (!enable_tcptrack) {
 		return NF_ACCEPT;
 	}
 
+	iph = skb_header_pointer(skb, nhoff, sizeof(_iph), &_iph);
+	if (!iph) {
+		printk("### tcptrack: no ip hdr \n");
+		return NF_ACCEPT;
+	}
+
+	dataoff = ipv4_get_l4proto(skb, nhoff, &protonum);
+	if (dataoff <= 0) {
+		printk("### tcptrack: not prepared to track yet or error occurred\n");
+		return NF_ACCEPT;
+	}
+
+	// TCP only
+	if (protonum != IPPROTO_TCP) {
+		return NF_ACCEPT;
+	}
+
+	th = skb_header_pointer(skb, dataoff, sizeof(_tcph), &_tcph);
+	if (th == NULL) {
+		printk("### tcptack: no tcp hdr \n");
+		return NF_ACCEPT;
+	}
+
+	if (tcp_error(th, skb, dataoff)) {
+		printk("### tcptack: tcp err \n");
+		return NF_ACCEPT;
+	}
+
 	ct = get_conntrack(skb, &ctinfo);
+	if (ct == NULL) {
+		// XXX: FIXME - how to find zone id from dev
+		zone.id = 100;
+		zone.dir = NF_CT_DEFAULT_ZONE_DIR;
+		ct = lookup_conntrack(net,  &zone, family, skb, false);
+	}
+
+	dump_skb((const struct sk_buff *)skb, ctinfo, 0);
+
 	if (ct == NULL) {
 		printk("### tcptack: no ct \n");
 		return NF_ACCEPT;
@@ -179,81 +325,102 @@ unsigned int vgw_tcptrack_main(struct sk_buff *skb)
 
 	// NLB packets only
 	if (!check_zone(ct)) {
-		return NF_ACCEPT;
-	}
-
-	// TCP only
-	protonum = nf_ct_protonum(ct);
-	if (protonum != IPPROTO_TCP) {
-		printk("### tcptack: not tcp \n");
+		//printk("### tcptack: mismatch zone \n");
 		return NF_ACCEPT;
 	}
 
 	// hold the ct
 	//nf_conntrack_get(&ct->ct_general);
 
-	//dataoff = get_l4proto(skb, skb_network_offset(skb), state->pf, &protonum);
-	dataoff = ipv4_get_l4proto(skb, skb_network_offset(skb), &protonum);
-	if (dataoff <= 0) {
-		printk("### tcptrack: not prepared to track yet or error occurred\n");
-		goto out;
-	}
-
-	th = skb_header_pointer(skb, dataoff, sizeof(_tcph), &_tcph);
-	if (th == NULL) {
-		printk("### tcptack: no tcp hdr \n");
-		goto out;
-	}
-
-	if (tcp_error(th, skb, dataoff)) {
-		printk("### tcptack: tcp err \n");
-		goto out;
-	}
-
 	/////////////////////
 	spin_lock_bh(&ct->lock);
 
 	// XXX: set seq/ack
 	ct->proto.tcp.last_seq = ntohl(th->seq);
-	ct->proto.tcp.last_ack = ntohl(th->ack_seq);
 	ct->proto.tcp.last_end = segment_seq_plus_len(ntohl(th->seq), skb->len, dataoff, th);
+	last_ack = ntohl(th->ack_seq);
+	if (last_ack != 0) {
+		ct->proto.tcp.last_ack = last_ack;
+	}
 
-	dump_ip_tuple(ct, ctinfo, th);
+	//dump_ip_tuple(ct, ctinfo, th);
 
 	spin_unlock_bh(&ct->lock);
 	////////////////////////////
 
-out:
+//out:
 	// release it
 	//nf_conntrack_put(ct);
 
 	return ret;
 }
 
-static unsigned int vgw_tcptrack_hook(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
-{
-	if (state->pf != NFPROTO_IPV4) {
-		return NF_ACCEPT;
-	}
+/////////////////////////////
 
-	return vgw_tcptrack_main(skb);
+/* Begin kfunc definitions */
+
+__diag_push();
+__diag_ignore_all("-Wmissing-prototypes", "Global kfuncs as their definitions will be in BTF");
+
+__bpf_kfunc int bpf_vgw_update_tcp_ct(struct net* net, struct sk_buff *skb, u16 family)
+{
+	/*
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct = NULL;
+	ct = nf_ct_get(skb, &ctinfo);
+
+	printk("### tcptack: look ct in vgw with skb:0x%p, ct=0x%p \n", skb, ct);
+	*/
+
+	vgw_tcptrack_main(net, skb, family);
+
+	return 0;
 }
 
-struct nf_hook_ops tcptrack_hook_ops = {
-	.hooknum = NF_INET_LOCAL_IN,
-	.hook = vgw_tcptrack_hook,
-	.pf = PF_INET,
+/* End kfunc definitions */
 
-	//.priority = NF_IP_PRI_FILTER + 1};
-	.priority = NF_IP_PRI_CONNTRACK_HELPER + 1
+__diag_pop()
+
+BTF_SET8_START(nf_ct_kfunc_set_vgw)
+BTF_ID_FLAGS(func, bpf_vgw_update_tcp_ct)
+BTF_SET8_END(nf_ct_kfunc_set_vgw)
+
+static const struct btf_kfunc_id_set vgw_kfunc_set = {
+	.owner = THIS_MODULE,
+	.set   = &nf_ct_kfunc_set_vgw,
 };
+
+int register_nf_conntrack_bpf(void)
+{
+	int ret;
+
+	printk("### tcptack: Start register btf \n");
+
+	//ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_XDP, &vgw_kfunc_set);
+	//ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_KPROBE, &vgw_kfunc_set);
+	//ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_SCHED_CLS, &vgw_kfunc_set);
+	ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_UNSPEC, &vgw_kfunc_set);
+	//ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_TRACING, &vgw_kfunc_set);
+	if (!ret) {
+		printk("### tcptack: register bpf succeeded \n");
+	} else {
+		printk("### tcptack: register bpf failed: ret=%d \n", ret);
+	}
+
+	return ret;
+}
+
+void cleanup_nf_conntrack_bpf(void)
+{
+
+}
 
 
 int vgw_tcptrack_init(void) 
 {
 	pr_info("Init VGW tcptrack Module: %s\n", VERSION_STRING);
 
-	nf_register_net_hook(&init_net,&tcptrack_hook_ops);
+	register_nf_conntrack_bpf();
 
 	return 0;
 }
@@ -262,6 +429,6 @@ void vgw_tcptrack_exit(void)
 {
 	pr_info("Exit VGW tcptrack Module: %s\n", VERSION_STRING);
 
-	nf_unregister_net_hook(&init_net, &tcptrack_hook_ops);
+	cleanup_nf_conntrack_bpf();
 }
 
