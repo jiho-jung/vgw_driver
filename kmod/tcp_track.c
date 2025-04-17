@@ -262,7 +262,7 @@ static bool check_zone(struct nf_conn *ct)
 }
 
 static __always_inline unsigned int
-vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family)
+vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 {
 	enum ip_conntrack_info ctinfo = 0;
 	struct nf_conn *ct = NULL;
@@ -273,7 +273,7 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family)
 	const struct tcphdr *th;
 	struct tcphdr _tcph;
 	int nhoff = skb_network_offset(skb);
-	struct nf_conntrack_zone zone;
+	struct nf_conntrack_zone nf_zone;
 	uint32_t last_ack;
 
 	if (!enable_tcptrack) {
@@ -311,12 +311,12 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family)
 	ct = get_conntrack(skb, &ctinfo);
 	if (ct == NULL) {
 		// XXX: FIXME - how to find zone id from dev
-		zone.id = 100;
-		zone.dir = NF_CT_DEFAULT_ZONE_DIR;
-		ct = lookup_conntrack(net,  &zone, family, skb, false);
+		nf_zone.id = zone;
+		nf_zone.dir = NF_CT_DEFAULT_ZONE_DIR;
+		ct = lookup_conntrack(net,  &nf_zone, family, skb, false);
 	}
 
-	dump_skb((const struct sk_buff *)skb, ctinfo, 0);
+	dump_skb((const struct sk_buff *)skb, ctinfo, zone);
 
 	if (ct == NULL) {
 		printk("### tcptack: no ct \n");
@@ -362,18 +362,9 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family)
 __diag_push();
 __diag_ignore_all("-Wmissing-prototypes", "Global kfuncs as their definitions will be in BTF");
 
-__bpf_kfunc int bpf_vgw_update_tcp_ct(struct net* net, struct sk_buff *skb, u16 family)
+__bpf_kfunc int bpf_vgw_update_tcp_ct(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 {
-	/*
-	enum ip_conntrack_info ctinfo;
-	struct nf_conn *ct = NULL;
-	ct = nf_ct_get(skb, &ctinfo);
-
-	printk("### tcptack: look ct in vgw with skb:0x%p, ct=0x%p \n", skb, ct);
-	*/
-
-	vgw_tcptrack_main(net, skb, family);
-
+	vgw_tcptrack_main(net, skb, family, zone);
 	return 0;
 }
 
@@ -394,17 +385,15 @@ int register_nf_conntrack_bpf(void)
 {
 	int ret;
 
-	printk("### tcptack: Start register btf \n");
-
 	//ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_XDP, &vgw_kfunc_set);
 	//ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_KPROBE, &vgw_kfunc_set);
 	//ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_SCHED_CLS, &vgw_kfunc_set);
 	ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_UNSPEC, &vgw_kfunc_set);
 	//ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_TRACING, &vgw_kfunc_set);
 	if (!ret) {
-		printk("### tcptack: register bpf succeeded \n");
+		pr_info("tcptack: register bpf succeeded \n");
 	} else {
-		printk("### tcptack: register bpf failed: ret=%d \n", ret);
+		pr_err("tcptack: failed to register bpf, ret=%d \n", ret);
 	}
 
 	return ret;
