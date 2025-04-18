@@ -28,8 +28,6 @@
 #include <net/netfilter/nf_conntrack_bpf.h>
 #include <net/netfilter/nf_conntrack_core.h>
 
-//#include <linux/openvswitch.h>
-
 #include "vgw_version.h"
 
 ////////////////////////
@@ -337,8 +335,10 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 	} else if (th->rst) {
 		enum tcp_conntrack new_state = TCP_CONNTRACK_CLOSE;
 		set_ct_state(net, ct, new_state);
-	} else if (last_seq == ct->proto.tcp.last_seq &&
-			   last_ack == ct->proto.tcp.last_ack) {
+	} 
+
+	if (last_seq == ct->proto.tcp.last_seq &&
+		last_ack == ct->proto.tcp.last_ack) {
 
 		//pr_info("tcptack: found ct with the same seq and skip, seq=%u:%u, ack=%u:%u \n", 
 		//		 ct->proto.tcp.last_seq, last_seq, ct->proto.tcp.last_ack, last_ack);

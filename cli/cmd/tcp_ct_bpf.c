@@ -19,28 +19,16 @@ struct sw_flow_key;
 struct ovs_conntrack_info;
 struct ip_tunnel_info;
 struct vport;
-struct datapath;
-struct sw_flow_actions;
 
 /////////////////////////////
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 extern int bpf_vgw_update_tcp_ct(struct net *net, struct sk_buff *skb, u16 family, u16 zone) __ksym;
+extern int bpf_vgw_update_tcp_ct1(struct sk_buff *skb, u16 zone) __ksym;
 
 /////////////////////////////
 
-#if 0
-SEC("fentry/ovs_ct_execute")
-int BPF_PROG(ovs_ct_execute, struct net *net, struct sk_buff *skb, struct sw_flow_key *key, const struct ovs_conntrack_info *info)
-{
-	bpf_vgw_update_tcp_ct((struct sk_buff *)skb, 0);
-
-	return 0;
-}
-#endif
-
-#if 1
 // fexit only support not static/inline funcion
 SEC("fexit/ovs_ct_execute")
 int BPF_PROG(ovs_ct_execute,struct net *net, struct sk_buff *skb, struct sw_flow_key *key, const struct ovs_conntrack_info *info, int ret)
@@ -56,6 +44,32 @@ int BPF_PROG(ovs_ct_execute,struct net *net, struct sk_buff *skb, struct sw_flow
 	family = BPF_CORE_READ(info, family);
 	
 	bpf_vgw_update_tcp_ct(net, skb, family, zone.id); 
+
+	return 0;
+}
+
+#if 0
+SEC("fentry/ovs_ct_execute")
+int BPF_PROG(ovs_ct_execute, struct net *net, struct sk_buff *skb, struct sw_flow_key *key, const struct ovs_conntrack_info *info)
+{
+	bpf_vgw_update_tcp_ct((struct sk_buff *)skb, 0);
+
+	return 0;
+}
+#endif
+
+
+#if 0
+SEC("fentry/ovs_vport_send")
+int BPF_PROG(ovs_vport_send,struct vport *vport, struct sk_buff *skb, u8 mac_proto)
+{
+	// init_net
+	//struct net_device *dev = NULL;
+
+	//dev = (struct net_device *)BPF_CORE_READ(vport, dev);
+	//net = dev_net((const struct net_device *)dev);
+
+	//u16 portId = BPF_CORE_READ(vport, port_no);
 
 	return 0;
 }
