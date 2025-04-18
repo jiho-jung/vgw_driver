@@ -100,6 +100,7 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 
 	var err error
 	var tcpInfo *TcpInfo
+	var tcpInfo1 *TcpInfo = &TcpInfo{}
 	var vxlanInfo *VxlanInfo
 
 	if vni != 0 {
@@ -135,7 +136,25 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	/*
+		// XXXX: need arp for server and client in NLB host
+		sudo arp -s 3.3.3.11 52:54:88:88:89:0b
+		sudo arp -s 3.3.3.21 52:54:88:88:89:15
+	*/
+
+	//tcpInfo1.SrcMAC, _ = net.ParseMAC(tcpInfo.DstMAC.String())
+	//tcpInfo1.DstMAC, _ = net.ParseMAC(tcpInfo.SrcMAC.String())
+	tcpInfo1.SrcMAC, _ = net.ParseMAC("52:54:88:88:89:6d")
+	tcpInfo1.DstMAC, _ = net.ParseMAC("52:54:88:88:89:15")
+	tcpInfo1.SrcIp, _ = netip.ParseAddr(tcpInfo.DstIp.String())
+	tcpInfo1.DstIp, _ = netip.ParseAddr(tcpInfo.SrcIp.String())
+	tcpInfo1.SrcPort = tcpInfo.DstPort
+	tcpInfo1.DstPort = tcpInfo.SrcPort
+	tcpInfo1.Seq = tcpInfo.Ack
+	tcpInfo1.Ack = tcpInfo.Seq
+
 	SendTcpReset(tcpInfo, vxlanInfo)
+	SendTcpReset(tcpInfo1, vxlanInfo)
 }
 
 func getTcpInfo() (*TcpInfo, error) {
@@ -208,7 +227,7 @@ func getVxLanInfo() (*VxlanInfo, error) {
 
 func getInnerMac(tcpInfo *TcpInfo) error {
 	smac := viper.GetString("smac")
-	dmac := viper.GetString("smac")
+	dmac := viper.GetString("dmac")
 
 	if len(smac) > 1 {
 		smacAddr, err := net.ParseMAC(smac)
@@ -290,6 +309,7 @@ func getConntrack(zone int) (*TcpInfo, error) {
 	return tcpInfo, nil
 }
 
+/*
 func tcpReset(ct *conntrack.Flow, vxlanInfo *VxlanInfo) {
 	tuple := &ct.TupleOrig
 	seqTrk := ct.ProtoInfo.TCP.SeqTrack
@@ -305,6 +325,7 @@ func tcpReset(ct *conntrack.Flow, vxlanInfo *VxlanInfo) {
 
 	SendTcpReset(&tcpInfo, vxlanInfo)
 }
+*/
 
 func runCmdCtShow(cmd *cobra.Command, args []string) {
 	log.Debugf("Show Conntracks")

@@ -73,11 +73,11 @@ func SendTcpReset(tcpInfo *TcpInfo, vxlanInfo *VxlanInfo) {
 		Urgent:  0,
 		Seq:     tcpInfo.Seq,
 		Ack:     tcpInfo.Ack,
-		ACK:     true,
+		ACK:     false,
 		SYN:     false,
 		FIN:     false,
 		RST:     true,
-		URG:     false,
+		URG:     true,
 		ECE:     false,
 		CWR:     false,
 		NS:      false,
@@ -94,6 +94,8 @@ func SendTcpReset(tcpInfo *TcpInfo, vxlanInfo *VxlanInfo) {
 	pktBuf := gopacket.NewSerializeBuffer()
 
 	if vxlanInfo == nil {
+		eth.SrcMAC = tcpInfo.SrcMAC
+		eth.DstMAC = tcpInfo.DstMAC
 		// Ip packet
 		err := gopacket.SerializeLayers(pktBuf, opts, &tcp)
 		if err != nil {
@@ -177,8 +179,11 @@ func sendIpSocket(opts gopacket.SerializeOptions, ip *layers.IPv4, payload []byt
 	defer rawConn.Close()
 
 	err = rawConn.WriteTo(ipHeader, payload, nil)
-
-	log.Printf("packet of length %d sent!\n", (len(payload) + len(ipHeaderBuf.Bytes())))
+	if err != nil {
+		log.Printf("failed to send packet: err=%v !\n", err)
+	} else {
+		log.Printf("packet of length %d sent!\n", (len(payload) + len(ipHeaderBuf.Bytes())))
+	}
 
 	return nil
 }
