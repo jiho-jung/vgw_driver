@@ -142,10 +142,8 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 		sudo arp -s 3.3.3.21 52:54:88:88:89:15
 	*/
 
-	//tcpInfo1.SrcMAC, _ = net.ParseMAC(tcpInfo.DstMAC.String())
-	//tcpInfo1.DstMAC, _ = net.ParseMAC(tcpInfo.SrcMAC.String())
-	tcpInfo1.SrcMAC, _ = net.ParseMAC("52:54:88:88:89:6d")
-	tcpInfo1.DstMAC, _ = net.ParseMAC("52:54:88:88:89:15")
+	tcpInfo1.SrcMAC, _ = net.ParseMAC(tcpInfo.DstMAC.String())
+	tcpInfo1.DstMAC, _ = net.ParseMAC(tcpInfo.SrcMAC.String())
 	tcpInfo1.SrcIp, _ = netip.ParseAddr(tcpInfo.DstIp.String())
 	tcpInfo1.DstIp, _ = netip.ParseAddr(tcpInfo.SrcIp.String())
 	tcpInfo1.SrcPort = tcpInfo.DstPort
