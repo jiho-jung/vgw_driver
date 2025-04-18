@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/subchen/go-log"
+	"github.com/vgw_driver/pkg/bpf"
 )
 
 var cmdBpf = &cobra.Command{
@@ -43,7 +44,7 @@ func runCmdBpfRun(cmd *cobra.Command, args []string) {
 
 	w := viper.GetUint32("wait")
 
-	vgwBpf, err := LoadBpf()
+	vgwBpf, err := bpf.NewBpfLoader()
 	if err != nil {
 		fmt.Printf("failed to load bpf: err=%v \n", err)
 		return
