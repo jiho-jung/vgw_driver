@@ -3913,7 +3913,7 @@ static int __init ctnetlink_init(void)
 		goto err_out;
 	}
 
-	vgw_genl_init();
+	//vgw_genl_init();
 
 	pr_info("Init VGW Netlink Module: %s\n", VERSION_STRING);
 
@@ -3954,7 +3954,7 @@ err_out:
 static void __exit ctnetlink_exit(void)
 {
 	vgw_tcptrack_exit();
-	vgw_genl_exit();
+	//vgw_genl_exit();
 
 	unregister_pernet_subsys(&ctnetlink_net_ops);
 	nfnetlink_subsys_unregister(&ctnl_exp_subsys);

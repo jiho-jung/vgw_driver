@@ -35,7 +35,8 @@ func init() {
 	cmdNetlink.AddCommand(cmdGeneralShow)
 
 	// ct root cmd
-	RootCmd.AddCommand(cmdNetlink)
+	// not use
+	//RootCmd.AddCommand(cmdNetlink)
 }
 
 func runGenShow(cmd *cobra.Command, args []string) {
