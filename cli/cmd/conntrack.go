@@ -12,6 +12,8 @@ import (
 	"github.com/ti-mo/conntrack"
 )
 
+var paramZone int
+
 var cmdCt = &cobra.Command{
 	Use:     "conntrack",
 	Aliases: []string{"ct"},
@@ -52,7 +54,8 @@ var cmdCtTrackTcp = &cobra.Command{
 }
 
 func init() {
-	cmdCt.PersistentFlags().IntP("zone", "z", -1, "zone id, -1: use cli parameter, >=0: use ct")
+	//cmdCt.PersistentFlags().IntP("zone", "z", -1, "zone id, -1: use cli parameter, >=0: use ct")
+	cmdCt.PersistentFlags().IntVarP(&paramZone, "zone", "z", 01, "zone")
 	viper.BindPFlag("zone", cmdCt.PersistentFlags().Lookup("zone"))
 
 	cmdCt.AddCommand(cmdCtShow)
@@ -96,7 +99,8 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 	log.Debugf("Reset Conntracks")
 
 	vni := viper.GetUint32("vni")
-	zone := viper.GetInt("zone")
+	zone := paramZone
+	log.Debugf("Zone=%d", zone)
 
 	var err error
 	var tcpInfo *TcpInfo
@@ -309,7 +313,8 @@ func runCmdCtShow(cmd *cobra.Command, args []string) {
 	log.Debugf("Show Conntracks")
 
 	//OpenFlowListenAddr: viper.GetString(KeyOpenFlowListenAddr),
-	zone := viper.GetInt("zone")
+	zone := paramZone
+	log.Debugf("zone=%d", zone)
 
 	c, err := conntrack.Dial(nil)
 	if err != nil {
@@ -351,10 +356,12 @@ func runCmdCtAdd(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	zone := viper.GetInt("zone")
+	//zone := viper.GetInt("zone")
+	zone := paramZone
 	if zone == -1 {
 		zone = 0
 	}
+	log.Debugf("Zone=%d", zone)
 
 	for srcPort := 1; srcPort <= 1; srcPort++ {
 		f1 := conntrack.NewFlow(
@@ -375,7 +382,9 @@ func runCmdCtAdd(cmd *cobra.Command, args []string) {
 func runCmdCtFlush(cmd *cobra.Command, args []string) {
 	log.Debugf("Flush Conntracks")
 
-	zone := viper.GetInt("zone")
+	//zone := viper.GetInt("zone")
+	zone := paramZone
+	log.Debugf("Zone=%d", zone)
 	var f *conntrack.FilterZone
 	if zone != -1 {
 		f = &conntrack.FilterZone{
