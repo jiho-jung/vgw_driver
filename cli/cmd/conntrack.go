@@ -118,7 +118,16 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 			return
 		}
 	} else {
-		tcpInfo, err = getConntrack(zone)
+		sport := viper.GetUint16("sport")
+		dport := viper.GetUint16("dport")
+
+		c, err := conntrack.Dial(nil)
+		if err != nil {
+			log.Errorf("failed to connect netlink: err=%v", err)
+			return
+		}
+
+		tcpInfo, err = GetConntrack(c, uint32(zone), sport, dport)
 		if err != nil {
 			log.Errorf("failed to get ct: err=%v", err)
 			return
@@ -248,21 +257,23 @@ func getInnerMac(tcpInfo *TcpInfo) error {
 	return nil
 }
 
-func getConntrack(zone int) (*TcpInfo, error) {
-	sport := viper.GetUint16("sport")
-	dport := viper.GetUint16("dport")
+func GetConntrack(conn *conntrack.Conn, zone uint32, sport uint16, dport uint16) (*TcpInfo, error) {
+	/*
+		sport := viper.GetUint16("sport")
+		dport := viper.GetUint16("dport")
 
-	c, err := conntrack.Dial(nil)
-	if err != nil {
-		return nil, err
-	}
+		c, err := conntrack.Dial(nil)
+		if err != nil {
+			return nil, err
+		}
+	*/
 
 	var f *conntrack.FilterZone
 	f = &conntrack.FilterZone{
 		Zone: uint16(zone),
 	}
 
-	cts, err := c.DumpFilter(f, nil)
+	cts, err := conn.DumpFilter(f, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -292,6 +303,7 @@ func getConntrack(zone int) (*TcpInfo, error) {
 			seqTrk := ct.ProtoInfo.TCP.SeqTrack
 
 			tcpInfo = &TcpInfo{
+				Id:      ct.ID,
 				SrcIp:   tuple.IP.DestinationAddress,
 				DstIp:   tuple.IP.SourceAddress,
 				SrcPort: tuple.Proto.DestinationPort,

@@ -61,6 +61,8 @@
 int vgw_tcptrack_init(void);
 void vgw_tcptrack_exit(void);
 bool check_zone(struct nf_conn *ct);
+int genl_test_init(void);
+void genl_test_exit(void);
 
 // 2025.3.
 // copied from linux-5.14.0-362.8.1.el9_3/net/netfilter/nf_conntrack_netlink.c
@@ -212,6 +214,7 @@ static int ctnetlink_dump_protoinfo(struct sk_buff *skb, struct nf_conn *ct,
 
 	u_int8_t proto = nf_ct_protonum(ct);
 	if (proto == IPPROTO_TCP) {
+		// tcp seq/ack for vgatway
 		return vgw_dump_tcp_protoinfo(skb, ct, destroy);
 	}
 
@@ -762,20 +765,6 @@ ctnetlink_conntrack_event(unsigned int events, const struct nf_ct_event *item)
 	} else
 		return 0;
 
-	/*
-	zone = nf_ct_zone(ct);
-	if (zone != NULL && group == NFNLGRP_CONNTRACK_NEW && check_zone(ct)) {
-		printk("### vgw_driver: new ct state \n");
-		vgw_update_tcp_state(ct);
-	} else if (zone != NULL && group == NFNLGRP_CONNTRACK_UPDATE) {
-		skb = nlmsg_new(ctnetlink_nlmsg_size(ct), GFP_ATOMIC);
-		if (skb != NULL) {
-			printk("### vgw_driver: update tcp seq/ack \n");
-			//vgw_tcptrack_main(skb);
-		}
-	}
-	*/
-
 	net = nf_ct_net(ct);
 	if (!item->report && !nfnetlink_has_listeners(net, group))
 		return 0;
@@ -1193,6 +1182,7 @@ static int ctnetlink_filter_match(struct nf_conn *ct, void *data)
 	}
 
 #ifdef CONFIG_NF_CONNTRACK_ZONES
+	// zone filter for vgateway
 	if ((filter->zone.flags & NF_CT_ZONE_DIR_ORIG) && 
 		nf_ct_zone_id(nf_ct_zone(ct), IP_CT_DIR_ORIGINAL) != filter->zone.id)
 		goto ignore_entry;
@@ -3923,6 +3913,8 @@ static int __init ctnetlink_init(void)
 		goto err_out;
 	}
 
+	genl_test_init();
+
 	pr_info("Init VGW Netlink Module: %s\n", VERSION_STRING);
 
 	NL_ASSERT_DUMP_CTX_FITS(struct ctnetlink_list_dump_ctx);
@@ -3948,6 +3940,7 @@ static int __init ctnetlink_init(void)
 	/* setup interaction between nf_queue and nf_conntrack_netlink. */
 	RCU_INIT_POINTER(nfnl_ct_hook, &ctnetlink_glue_hook);
 #endif
+
 	return 0;
 
 err_unreg_exp_subsys:
@@ -3961,6 +3954,7 @@ err_out:
 static void __exit ctnetlink_exit(void)
 {
 	vgw_tcptrack_exit();
+	genl_test_exit();
 
 	unregister_pernet_subsys(&ctnetlink_net_ops);
 	nfnetlink_subsys_unregister(&ctnl_exp_subsys);

@@ -26,6 +26,7 @@ type TcpInfo struct {
 	DstIp   netip.Addr
 	SrcPort uint16
 	DstPort uint16
+	Id      uint32
 	Seq     uint32
 	Ack     uint32
 }

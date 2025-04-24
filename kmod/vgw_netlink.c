@@ -6,6 +6,28 @@
 #include <linux/export.h>
 #include <net/genetlink.h>
 
+#include <linux/netfilter.h>
+#include <net/sock.h>
+#include <net/netfilter/nf_conntrack.h>
+#include <net/netfilter/nf_conntrack_core.h>
+#include <net/netfilter/nf_conntrack_expect.h>
+#include <net/netfilter/nf_conntrack_helper.h>
+#include <net/netfilter/nf_conntrack_seqadj.h>
+#include <net/netfilter/nf_conntrack_l4proto.h>
+#include <net/netfilter/nf_conntrack_tuple.h>
+#include <net/netfilter/nf_conntrack_acct.h>
+#include <net/netfilter/nf_conntrack_zones.h>
+#include <net/netfilter/nf_conntrack_timestamp.h>
+#include <net/netfilter/nf_conntrack_labels.h>
+#include <net/netfilter/nf_conntrack_synproxy.h>
+#if IS_ENABLED(CONFIG_NF_NAT)
+#include <net/netfilter/nf_nat.h>
+#include <net/netfilter/nf_nat_helper.h>
+#endif
+
+#include <linux/netfilter/nfnetlink.h>
+#include <linux/netfilter/nfnetlink_conntrack.h>
+
 #include "vgw_netlink.h"
 #include "vgw_version.h"
 
@@ -13,54 +35,92 @@
 
 static struct genl_family vgw_nl_family;
 
-#if 0
-static void greet_group(unsigned int group)
-{	
-	void *hdr;
-	int res, flags = GFP_ATOMIC;
-	char msg[VGW_NL_CT_ATTR_MSG_MAX];
-	struct sk_buff* skb = genlmsg_new(NLMSG_DEFAULT_SIZE, flags);
+struct tcp_seq_filter {
+	uint32_t id;
+	uint32_t zone;
+	uint32_t src_ip;
+	uint32_t dst_ip;
+	uint16_t src_port;
+	uint16_t dst_port;
+	uint8_t protocol;
+	uint8_t dummy[3];
+};
 
-	if (!skb) {
-		printk(KERN_ERR "%d: OOM!!", __LINE__);
-		return;
-	}
+struct tcp_seq {
+	uint32_t id; // id in conntrack and tcp_seq_filter
+	uint32_t seq;
+	uint32_t ack;
+};
 
-	hdr = genlmsg_put(skb, 0, 0, &vgw_nl_family, flags, VGW_NL_CT_CMD_DUMP);
-	if (!hdr) {
-		printk(KERN_ERR "%d: Unknown err !", __LINE__);
-		goto nlmsg_fail;
-	}
-
-	snprintf(msg, VGW_NL_CT_ATTR_MSG_MAX, "Hello group %s\n",
-			genl_test_mcgrp_names[group]);
-
-	res = nla_put_string(skb, VGW_NL_CT_ATTR_ZONE, msg);
-	if (res) {
-		printk(KERN_ERR "%d: err %d ", __LINE__, res);
-		goto nlmsg_fail;
-	}
-
-	genlmsg_end(skb, hdr);
-	genlmsg_multicast(&vgw_nl_family, skb, 0, group, flags);
-	return;
-
-nlmsg_fail:
-	genlmsg_cancel(skb, hdr);
-	nlmsg_free(skb);
-	return;
-}
-#endif
-
-int dump_conntrack(struct sk_buff *skb_2, struct genl_info *info) 
+static int vgw_get_conntrack(struct sk_buff *skb, struct genl_info *info, struct tcp_seq_filter *flt) 
 {
-	//struct nlattr *na;
+	struct nf_conntrack_zone zone = {};
+	struct nf_conntrack_tuple_hash *h;
+	struct nf_conntrack_tuple tuple = {};
+	struct tcp_seq res_seq = {};
+	struct nf_conn *ct;
+	struct net *net;
+	__be32 id = 0;
+	int ret = 0;
+
+	zone.id = (uint16_t)flt->zone;
+	zone.dir = NF_CT_ZONE_DIR_ORIG;
+	net = genl_info_net(info);
+
+	tuple.src.l3num = NFPROTO_IPV4;
+	tuple.src.u3.ip = htonl(flt->src_ip);
+	tuple.dst.u3.ip = htonl(flt->dst_ip);
+	tuple.src.u.udp.port = htons(flt->src_port);
+	tuple.dst.u.udp.port = htons(flt->dst_port);
+	tuple.dst.protonum = flt->protocol;
+	tuple.dst.dir = IP_CT_DIR_ORIGINAL;
+
+	h = nf_conntrack_find_get(net, &zone, &tuple);
+	if (!h) {
+		return -ENOENT;
+	}
+
+	ct = nf_ct_tuplehash_to_ctrack(h);
+	if (ct == NULL) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	id = ntohl(nf_ct_get_id(ct));
+	if (flt->id != id) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	res_seq.id = id;
+	res_seq.seq = ct->proto.tcp.last_seq;
+	res_seq.ack = ct->proto.tcp.last_ack;
+
+	if (nla_put(skb, VGW_NL_CT_ATTR_TCP_SEQ, sizeof(struct tcp_seq), &res_seq)) {
+		pr_err("failed to put tcpseq into response skb\n");
+		ret = -ENOMEM;
+		goto out;
+	}
+
+out:
+	nf_ct_put(ct);
+
+	return ret;
+}
+
+int dump_conntrack(struct sk_buff *skb2, struct genl_info *info, struct tcp_seq_filter* flt) 
+{
 	struct sk_buff *skb;
-	int rc;
+	int ret = 0;
 	void *msg_head;
-	char msg[VGW_NL_CT_ATTR_MSG_MAX];
 
 	if (info == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	ret = vgw_get_conntrack(skb, info, flt);
+	if (ret != 0) {
 		goto out;
 	}
 
@@ -68,66 +128,60 @@ int dump_conntrack(struct sk_buff *skb_2, struct genl_info *info)
 	//Allocate some memory, since the size is not yet known use NLMSG_GOODSIZE
 	skb = genlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
 	if (skb == NULL) {
+		ret = -ENOMEM;
 		goto out;
 	}
 
 	//Create the message headers
 	msg_head = genlmsg_put(skb, 0, info->snd_seq, &vgw_nl_family, 0, VGW_NL_CT_CMD_DUMP);
 	if (msg_head == NULL) {
-		rc = -ENOMEM;
+		ret = -ENOMEM;
 		goto out;
 	}
 
-	snprintf(msg, VGW_NL_CT_ATTR_MSG_MAX, "Hello sender %d", info->snd_portid);
-
-	rc = nla_put_string(skb, VGW_NL_CT_CMD_DUMP, msg);
-	if (rc != 0) {
-		goto out;
-	}
 
 	//Finalize the message
 	genlmsg_end(skb, msg_head);
 
 	//Send the message back
-	rc = genlmsg_unicast(genl_info_net(info), skb, info->snd_portid);
-	if (rc != 0) {
+	ret = genlmsg_unicast(genl_info_net(info), skb, info->snd_portid);
+	if (ret != 0) {
 		goto out;
 	}
 
 	return 0;
 
 out:
-	printk("An error occured in dump_conntrack:\n");
-	return 0;
+	//pr_info("An error occured in dump_conntrack: ret=%d\n", ret);
+	return ret;
 }
 
 
 static int genl_test_rx_msg(struct sk_buff* skb, struct genl_info* info)
 {
-	if (!info->attrs[VGW_NL_CT_ATTR_ZONE]) {
-		printk("empty message from %d!!\n", info->snd_portid);
-		printk("%p\n", info->attrs[VGW_NL_CT_ATTR_ZONE]);
+	struct tcp_seq_filter *flt;
+	int ret;
+
+	if (!info->attrs[VGW_NL_CT_ATTR_FILTER]) {
+		pr_err("Empty filter: port= %u\n", info->snd_portid);
 		return -EINVAL;
 	}
 
-	//printk("port=%u,  zone=%s, seq=%u \n", info->snd_portid, (char*)nla_data(info->attrs[VGW_NL_CT_ATTR_ZONE]), info->snd_seq);
-	printk("port=%u,  zone=%u, seq=%u \n", info->snd_portid, nla_get_u32(info->attrs[VGW_NL_CT_ATTR_ZONE]), info->snd_seq);
+	flt = (struct tcp_seq_filter*)nla_data(info->attrs[VGW_NL_CT_ATTR_FILTER]);
+	pr_debug("port=%u, zone=%u, snd_seq=%u \n", info->snd_portid, flt->zone, info->snd_seq);
 
-	dump_conntrack(skb, info);
+	ret = dump_conntrack(skb, info, flt);
+	if (ret != 0) {
+		pr_debug("failed to dump conntrack: err=%d\n", ret);
+	}
 
-	return 0;
+	return ret;
 }
 
 static struct nla_policy vgw_nl_ct_policy[VGW_NL_CT_ATTR_MAX+1] = {
-	[VGW_NL_CT_ATTR_ZONE] = {
-		.type = NLA_U32,
-#if 0
-#ifdef __KERNEL__
-		.len = 4
-#else
-		.maxlen = 4
-#endif
-#endif
+	[VGW_NL_CT_ATTR_FILTER] = {
+		.type = NLA_BINARY,
+		.len = 24
 	},
 };
 
@@ -140,36 +194,24 @@ static const struct genl_ops genl_test_ops[] = {
 	},
 };
 
-#if 0
-static const struct genl_multicast_group genl_test_mcgrps[] = {
-	[GENL_TEST_MCGRP0] = { .name = GENL_TEST_MCGRP0_NAME, },
-	[GENL_TEST_MCGRP1] = { .name = GENL_TEST_MCGRP1_NAME, },
-	[GENL_TEST_MCGRP2] = { .name = GENL_TEST_MCGRP2_NAME, },
-};
-#endif
-
 static struct genl_family vgw_nl_family = {
 	.name = VGW_NL_CT_FAMILY_NAME,
 	.version = 1,
-	//.maxattr = VGW_NL_CT_ATTR_MSG_MAX,
 	.maxattr = VGW_NL_CT_ATTR_MAX,
 	.netnsok = false,
 	.module = THIS_MODULE,
 	.ops = genl_test_ops,
 	.n_ops = ARRAY_SIZE(genl_test_ops),
-
-	//.mcgrps = genl_test_mcgrps,
-	//.n_mcgrps = ARRAY_SIZE(genl_test_mcgrps),
 };
 
 int genl_test_init(void)
 {
-	int rc;
+	int ret;
 
 	pr_info("Init VGW Netlink Module: %s\n", VERSION_STRING);
 
-	rc = genl_register_family(&vgw_nl_family);
-	if (rc)
+	ret = genl_register_family(&vgw_nl_family);
+	if (ret)
 		goto failure;
 
 	return 0;
