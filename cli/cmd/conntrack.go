@@ -136,7 +136,7 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 	}
 
 	if tcpInfo == nil {
-		log.Errorf("no TcpInfo")
+		log.Errorf("No TcpInfo")
 		return
 	}
 

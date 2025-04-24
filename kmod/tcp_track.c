@@ -85,14 +85,14 @@ ct_get_info(const struct nf_conntrack_tuple_hash *h)
 #endif
 
 static struct nf_conn* 
-lookup_conntrack(struct net *net, const struct nf_conntrack_zone *zone, u8 l3num, struct sk_buff *skb, bool natted)
+lookup_conntrack_by_skb(struct net *net, const struct nf_conntrack_zone *zone, u8 l3num, struct sk_buff *skb, bool natted)
 {
 	struct nf_conntrack_tuple tuple;
 	struct nf_conntrack_tuple_hash *h;
 	struct nf_conn *ct;
 
 	if (!nf_ct_get_tuplepr(skb, skb_network_offset(skb), l3num, net, &tuple)) {
-		pr_err("lookup_conntrack: Can't get tuple\n");
+		pr_err("lookup_conntrack_by_skb: Can't get tuple\n");
 		return NULL;
 	}
 
@@ -312,7 +312,7 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 		nf_zone.dir = NF_CT_DEFAULT_ZONE_DIR;
 
 		// lookup_ct should be released
-		lookup_ct = lookup_conntrack(net,  &nf_zone, family, skb, false);
+		lookup_ct = lookup_conntrack_by_skb(net,  &nf_zone, family, skb, false);
 
 		if (lookup_ct == NULL) {
 			goto out;

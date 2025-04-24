@@ -52,7 +52,7 @@ struct tcp_seq {
 	uint32_t ack;
 };
 
-static int lookup_conntrack(struct sk_buff *skb, struct genl_info *info, struct tcp_seq_filter *flt) 
+static int looup_conntrack_by_filter(struct sk_buff *skb, struct genl_info *info, struct tcp_seq_filter *flt) 
 {
 	struct nf_conntrack_zone zone = {};
 	struct nf_conntrack_tuple_hash *h;
@@ -61,7 +61,6 @@ static int lookup_conntrack(struct sk_buff *skb, struct genl_info *info, struct 
 	struct nf_conn *ct;
 	struct net *net;
 	__be32 id = 0;
-	int ret = 0;
 
 	zone.id = (uint16_t)flt->zone;
 	zone.dir = NF_CT_ZONE_DIR_ORIG;
@@ -77,18 +76,16 @@ static int lookup_conntrack(struct sk_buff *skb, struct genl_info *info, struct 
 
 	h = nf_conntrack_find_get(net, &zone, &tuple);
 	if (!h) {
-		return -ENOENT;
+		return 0;
 	}
 
 	ct = nf_ct_tuplehash_to_ctrack(h);
 	if (ct == NULL) {
-		ret = -ENOENT;
-		goto out;
+		return 0;
 	}
 
 	id = ntohl(nf_ct_get_id(ct));
 	if (flt->id != id) {
-		ret = -ENOENT;
 		goto out;
 	}
 
@@ -98,14 +95,15 @@ static int lookup_conntrack(struct sk_buff *skb, struct genl_info *info, struct 
 
 	if (nla_put(skb, VGW_NL_CT_ATTR_TCP_SEQ, sizeof(struct tcp_seq), &res_seq)) {
 		pr_err("failed to put tcpseq into response skb\n");
-		ret = -ENOMEM;
 		goto out;
 	}
 
 out:
-	nf_ct_put(ct);
+	if (ct != NULL) {
+		nf_ct_put(ct);
+	}
 
-	return ret;
+	return 0;
 }
 
 int dump_conntrack_tcp_seq(struct sk_buff *skb2, struct genl_info *info, struct tcp_seq_filter* flt) 
@@ -116,11 +114,6 @@ int dump_conntrack_tcp_seq(struct sk_buff *skb2, struct genl_info *info, struct 
 
 	if (info == NULL) {
 		ret = -ENOMEM;
-		goto out;
-	}
-
-	ret = lookup_conntrack(skb, info, flt);
-	if (ret != 0) {
 		goto out;
 	}
 
@@ -139,6 +132,7 @@ int dump_conntrack_tcp_seq(struct sk_buff *skb2, struct genl_info *info, struct 
 		goto out;
 	}
 
+	looup_conntrack_by_filter(skb, info, flt);
 
 	//Finalize the message
 	genlmsg_end(skb, msg_head);
@@ -152,7 +146,7 @@ int dump_conntrack_tcp_seq(struct sk_buff *skb2, struct genl_info *info, struct 
 	return 0;
 
 out:
-	//pr_info("An error occured in dump_conntrack_tcp_seq: ret=%d\n", ret);
+	pr_info("An error occured in dump_conntrack_tcp_seq: ret=%d\n", ret);
 	return ret;
 }
 
@@ -167,11 +161,11 @@ static int vgw_genl_rx_msg(struct sk_buff* skb, struct genl_info* info)
 	}
 
 	flt = (struct tcp_seq_filter*)nla_data(info->attrs[VGW_NL_CT_ATTR_FILTER]);
-	pr_debug("port=%u, zone=%u, snd_seq=%u \n", info->snd_portid, flt->zone, info->snd_seq);
+	//pr_debug("port=%u, ct_id=%u, zone=%u, snd_seq=%u \n", info->snd_portid, flt->id, flt->zone, info->snd_seq);
 
 	ret = dump_conntrack_tcp_seq(skb, info, flt);
 	if (ret != 0) {
-		pr_debug("failed to dump conntrack tcp seq: err=%d\n", ret);
+		pr_info("failed to dump conntrack tcp seq: err=%d\n", ret);
 	}
 
 	return ret;

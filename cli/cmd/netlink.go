@@ -123,7 +123,7 @@ func ConnectVgatewayNetlink() (conn *VgatewayNetlinkConn, err error) {
 		return nil, err
 	}
 
-	fmt.Printf("general netlink: %s: %+v", VGW_NETLINK_NAME, family)
+	fmt.Printf("general netlink: %s: %+v \n", VGW_NETLINK_NAME, family)
 
 	return &VgatewayNetlinkConn{
 		Conn: nl,

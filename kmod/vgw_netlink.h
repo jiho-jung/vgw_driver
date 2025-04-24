@@ -11,8 +11,6 @@
 
 #define VGW_NL_CT_FAMILY_NAME		"vgw_nl_ct" // max 16 char
 
-#define VGW_NL_CT_ATTR_MSG_MAX		256
-
 enum {
 	VGW_NL_CT_CMD_UNSPEC,		// Must NOT use element 0
 	VGW_NL_CT_CMD_DUMP,

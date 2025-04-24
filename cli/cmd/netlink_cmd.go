@@ -68,6 +68,8 @@ func runGenShow(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	fmt.Printf("TCPInfo: %+v \n", tcpInfo)
+
 	tcpseq, err := GetTcpSeq(vgwconn, zone, tcpInfo)
 	if err != nil {
 		log.Errorf("failed to get tcp seq: %v", err)
