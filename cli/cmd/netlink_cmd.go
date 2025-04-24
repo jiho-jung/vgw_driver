@@ -59,7 +59,7 @@ func runGenShow(cmd *cobra.Command, args []string) {
 	defer c.Close()
 
 	zone := uint32(100)
-	tcpInfo, err := GetConntrack(c, zone, sport, dport)
+	tcpInfo, err := GetTcpInfoFromConntrack(c, zone, sport, dport)
 	if err != nil {
 		log.Errorf("failed to get tcp infos: %v", err)
 		return

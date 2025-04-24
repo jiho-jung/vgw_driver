@@ -33,7 +33,7 @@
 
 // https://www.electronicsfaq.com/2014/02/generic-netlink-sockets-example-code.html
 
-static struct genl_family vgw_nl_family;
+static struct genl_family vgw_genl_family;
 
 struct tcp_seq_filter {
 	uint32_t id;
@@ -52,7 +52,7 @@ struct tcp_seq {
 	uint32_t ack;
 };
 
-static int vgw_get_conntrack(struct sk_buff *skb, struct genl_info *info, struct tcp_seq_filter *flt) 
+static int lookup_conntrack(struct sk_buff *skb, struct genl_info *info, struct tcp_seq_filter *flt) 
 {
 	struct nf_conntrack_zone zone = {};
 	struct nf_conntrack_tuple_hash *h;
@@ -108,7 +108,7 @@ out:
 	return ret;
 }
 
-int dump_conntrack(struct sk_buff *skb2, struct genl_info *info, struct tcp_seq_filter* flt) 
+int dump_conntrack_tcp_seq(struct sk_buff *skb2, struct genl_info *info, struct tcp_seq_filter* flt) 
 {
 	struct sk_buff *skb;
 	int ret = 0;
@@ -119,7 +119,7 @@ int dump_conntrack(struct sk_buff *skb2, struct genl_info *info, struct tcp_seq_
 		goto out;
 	}
 
-	ret = vgw_get_conntrack(skb, info, flt);
+	ret = lookup_conntrack(skb, info, flt);
 	if (ret != 0) {
 		goto out;
 	}
@@ -133,7 +133,7 @@ int dump_conntrack(struct sk_buff *skb2, struct genl_info *info, struct tcp_seq_
 	}
 
 	//Create the message headers
-	msg_head = genlmsg_put(skb, 0, info->snd_seq, &vgw_nl_family, 0, VGW_NL_CT_CMD_DUMP);
+	msg_head = genlmsg_put(skb, 0, info->snd_seq, &vgw_genl_family, 0, VGW_NL_CT_CMD_DUMP);
 	if (msg_head == NULL) {
 		ret = -ENOMEM;
 		goto out;
@@ -152,12 +152,11 @@ int dump_conntrack(struct sk_buff *skb2, struct genl_info *info, struct tcp_seq_
 	return 0;
 
 out:
-	//pr_info("An error occured in dump_conntrack: ret=%d\n", ret);
+	//pr_info("An error occured in dump_conntrack_tcp_seq: ret=%d\n", ret);
 	return ret;
 }
 
-
-static int genl_test_rx_msg(struct sk_buff* skb, struct genl_info* info)
+static int vgw_genl_rx_msg(struct sk_buff* skb, struct genl_info* info)
 {
 	struct tcp_seq_filter *flt;
 	int ret;
@@ -170,61 +169,60 @@ static int genl_test_rx_msg(struct sk_buff* skb, struct genl_info* info)
 	flt = (struct tcp_seq_filter*)nla_data(info->attrs[VGW_NL_CT_ATTR_FILTER]);
 	pr_debug("port=%u, zone=%u, snd_seq=%u \n", info->snd_portid, flt->zone, info->snd_seq);
 
-	ret = dump_conntrack(skb, info, flt);
+	ret = dump_conntrack_tcp_seq(skb, info, flt);
 	if (ret != 0) {
-		pr_debug("failed to dump conntrack: err=%d\n", ret);
+		pr_debug("failed to dump conntrack tcp seq: err=%d\n", ret);
 	}
 
 	return ret;
 }
 
-static struct nla_policy vgw_nl_ct_policy[VGW_NL_CT_ATTR_MAX+1] = {
+static struct nla_policy vgw_genl_policy[VGW_NL_CT_ATTR_MAX+1] = {
 	[VGW_NL_CT_ATTR_FILTER] = {
 		.type = NLA_BINARY,
 		.len = 24
 	},
 };
 
-static const struct genl_ops genl_test_ops[] = {
+static const struct genl_ops vgw_genl_ops[] = {
 	{
 		.cmd = VGW_NL_CT_CMD_DUMP,
-		.policy = vgw_nl_ct_policy,
-		.doit = genl_test_rx_msg,
+		.policy = vgw_genl_policy,
+		.doit = vgw_genl_rx_msg,
 		.dumpit = NULL,
 	},
 };
 
-static struct genl_family vgw_nl_family = {
+static struct genl_family vgw_genl_family = {
 	.name = VGW_NL_CT_FAMILY_NAME,
 	.version = 1,
 	.maxattr = VGW_NL_CT_ATTR_MAX,
 	.netnsok = false,
 	.module = THIS_MODULE,
-	.ops = genl_test_ops,
-	.n_ops = ARRAY_SIZE(genl_test_ops),
+	.ops = vgw_genl_ops,
+	.n_ops = ARRAY_SIZE(vgw_genl_ops),
 };
 
-int genl_test_init(void)
+int vgw_genl_init(void)
 {
 	int ret;
 
-	pr_info("Init VGW Netlink Module: %s\n", VERSION_STRING);
+	pr_info("Init VGW General Netlink Module: %s\n", VERSION_STRING);
 
-	ret = genl_register_family(&vgw_nl_family);
+	ret = genl_register_family(&vgw_genl_family);
 	if (ret)
 		goto failure;
 
 	return 0;
 
 failure:
-
-	printk("VGE Netlink: error occurred in %s\n", __func__);
+	pr_err("VGW General Netlink: error occurred in %s\n", __func__);
 	return -EINVAL;
 }
 
-void genl_test_exit(void)
+void vgw_genl_exit(void)
 {
-	pr_info("Exit VGW Netlink Module: %s\n", VERSION_STRING);
-	genl_unregister_family(&vgw_nl_family);
+	pr_info("Exit VGW General Netlink Module: %s\n", VERSION_STRING);
+	genl_unregister_family(&vgw_genl_family);
 }
 

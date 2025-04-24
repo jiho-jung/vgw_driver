@@ -60,9 +60,8 @@
 
 int vgw_tcptrack_init(void);
 void vgw_tcptrack_exit(void);
-bool check_zone(struct nf_conn *ct);
-int genl_test_init(void);
-void genl_test_exit(void);
+int vgw_genl_init(void);
+void vgw_genl_exit(void);
 
 // 2025.3.
 // copied from linux-5.14.0-362.8.1.el9_3/net/netfilter/nf_conntrack_netlink.c
@@ -1059,6 +1058,7 @@ err_filter:
 
 static bool ctnetlink_needs_filter(u8 family, const struct nlattr * const *cda)
 {
+	// add zone for vgateway
 	return family || cda[CTA_MARK] || cda[CTA_FILTER] || cda[CTA_STATUS] || cda[CTA_ZONE];
 }
 
@@ -3913,7 +3913,7 @@ static int __init ctnetlink_init(void)
 		goto err_out;
 	}
 
-	genl_test_init();
+	vgw_genl_init();
 
 	pr_info("Init VGW Netlink Module: %s\n", VERSION_STRING);
 
@@ -3954,7 +3954,7 @@ err_out:
 static void __exit ctnetlink_exit(void)
 {
 	vgw_tcptrack_exit();
-	genl_test_exit();
+	vgw_genl_exit();
 
 	unregister_pernet_subsys(&ctnetlink_net_ops);
 	nfnetlink_subsys_unregister(&ctnl_exp_subsys);

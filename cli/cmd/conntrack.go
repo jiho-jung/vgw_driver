@@ -112,7 +112,7 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 	}
 
 	if zone == -1 {
-		tcpInfo, err = getTcpInfo()
+		tcpInfo, err = GetTcpInfoFromCli()
 		if err != nil {
 			log.Errorf("failed to get tcpinfo: err=%v", err)
 			return
@@ -126,8 +126,9 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 			log.Errorf("failed to connect netlink: err=%v", err)
 			return
 		}
+		defer c.Close()
 
-		tcpInfo, err = GetConntrack(c, uint32(zone), sport, dport)
+		tcpInfo, err = GetTcpInfoFromConntrack(c, uint32(zone), sport, dport)
 		if err != nil {
 			log.Errorf("failed to get ct: err=%v", err)
 			return
@@ -138,6 +139,8 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 		log.Errorf("no TcpInfo")
 		return
 	}
+
+	fmt.Printf("TCPInfo: %+v \n", tcpInfo)
 
 	err = getInnerMac(tcpInfo)
 	if err != nil {
@@ -164,7 +167,7 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 	SendTcpReset(tcpInfo1, vxlanInfo)
 }
 
-func getTcpInfo() (*TcpInfo, error) {
+func GetTcpInfoFromCli() (*TcpInfo, error) {
 	sip := viper.GetString("sip")
 	dip := viper.GetString("dip")
 	sport := viper.GetUint16("sport")
@@ -257,30 +260,19 @@ func getInnerMac(tcpInfo *TcpInfo) error {
 	return nil
 }
 
-func GetConntrack(conn *conntrack.Conn, zone uint32, sport uint16, dport uint16) (*TcpInfo, error) {
-	/*
-		sport := viper.GetUint16("sport")
-		dport := viper.GetUint16("dport")
-
-		c, err := conntrack.Dial(nil)
-		if err != nil {
-			return nil, err
-		}
-	*/
-
-	var f *conntrack.FilterZone
-	f = &conntrack.FilterZone{
+func GetTcpInfoFromConntrack(conn *conntrack.Conn, zone uint32, sport uint16, dport uint16) (*TcpInfo, error) {
+	var zf *conntrack.FilterZone
+	zf = &conntrack.FilterZone{
 		Zone: uint16(zone),
 	}
 
-	cts, err := conn.DumpFilter(f, nil)
+	cts, err := conn.DumpFilter(zf, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	var tcpInfo *TcpInfo
 
-	var i int
 	for _, ct := range cts {
 		if ct.ProtoInfo.TCP == nil {
 			continue
@@ -292,13 +284,7 @@ func GetConntrack(conn *conntrack.Conn, zone uint32, sport uint16, dport uint16)
 			continue
 		}
 
-		fmt.Printf("CT(%d): %+v \n", i+1, ct)
-		fmt.Printf("  TCP: %+v \n", *ct.ProtoInfo.TCP)
-
 		if ct.ProtoInfo.TCP.SeqTrack != nil {
-			fmt.Printf("  TCP SEQ: %+v \n", *ct.ProtoInfo.TCP.SeqTrack)
-			//tcpReset(&ct, vxlanInfo)
-
 			tuple := &ct.TupleOrig
 			seqTrk := ct.ProtoInfo.TCP.SeqTrack
 
@@ -318,24 +304,6 @@ func GetConntrack(conn *conntrack.Conn, zone uint32, sport uint16, dport uint16)
 
 	return tcpInfo, nil
 }
-
-/*
-func tcpReset(ct *conntrack.Flow, vxlanInfo *VxlanInfo) {
-	tuple := &ct.TupleOrig
-	seqTrk := ct.ProtoInfo.TCP.SeqTrack
-
-	tcpInfo := TcpInfo{
-		SrcIp:   tuple.IP.DestinationAddress,
-		DstIp:   tuple.IP.SourceAddress,
-		SrcPort: tuple.Proto.DestinationPort,
-		DstPort: tuple.Proto.SourcePort,
-		Seq:     seqTrk.LastAck,
-		Ack:     seqTrk.LastSeq,
-	}
-
-	SendTcpReset(&tcpInfo, vxlanInfo)
-}
-*/
 
 func runCmdCtShow(cmd *cobra.Command, args []string) {
 	log.Debugf("Show Conntracks")
