@@ -25,7 +25,6 @@ struct vport;
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 extern int bpf_vgw_update_tcp_ct(struct net *net, struct sk_buff *skb, u16 family, u16 zone) __ksym;
-extern int bpf_vgw_update_tcp_ct1(struct sk_buff *skb, u16 zone) __ksym;
 
 /////////////////////////////
 
