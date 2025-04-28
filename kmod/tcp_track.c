@@ -32,7 +32,8 @@
 
 ////////////////////////
 
-#define FLAGS_ZONE_FILTER 0x01
+#define FLAGS_ZONE_FILTER	0x01
+#define FLAGS_DUMP_PKT		0x02
 
 // RW: /sys/module/vgw_driver/parameters/
 
@@ -277,30 +278,30 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 	uint32_t last_ack, last_seq;
 
 	if (!enable_tcptrack) {
-		return NF_ACCEPT;
+		return 0;
 	} else if (!check_zone_id(zone)) {
-		return NF_ACCEPT;
+		return 0;
 	}
 
 	nhoff = skb_network_offset(skb);
 	iph = skb_header_pointer(skb, nhoff, sizeof(_iph), &_iph);
 	if (!iph) {
-		return NF_ACCEPT;
+		return 0;
 	}
 
 	dataoff = ipv4_get_l4proto(skb, nhoff, &protonum);
 	if (dataoff <= 0) {
-		return NF_ACCEPT;
+		return 0;
 	} else if (protonum != IPPROTO_TCP) {
 		// TCP only
-		return NF_ACCEPT;
+		return 0;
 	}
 
 	th = skb_header_pointer(skb, dataoff, sizeof(_tcph), &_tcph);
 	if (th == NULL) {
-		return NF_ACCEPT;
+		return 0;
 	} else if (tcp_error(th, skb, dataoff)) {
-		return NF_ACCEPT;
+		return 0;
 	}
 
 	last_seq = ntohl(th->seq);
@@ -346,7 +347,9 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 		goto out;
 	}
 
-	dump_skb((const struct sk_buff *)skb, ct, ctinfo, zone);
+	if (tcptrack_flags & FLAGS_DUMP_PKT) {
+		dump_skb((const struct sk_buff *)skb, ct, ctinfo, zone);
+	}
 
 	/////////////////////
 	spin_lock_bh(&ct->lock);
@@ -369,7 +372,7 @@ out:
 		nf_ct_put(lookup_ct);
 	}
 
-	return NF_ACCEPT;
+	return 0;
 }
 
 /////////////////////////////
