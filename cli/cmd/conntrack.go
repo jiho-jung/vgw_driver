@@ -12,6 +12,8 @@ import (
 	"github.com/ti-mo/conntrack"
 )
 
+var paramZone int
+
 var cmdCt = &cobra.Command{
 	Use:     "conntrack",
 	Aliases: []string{"ct"},
@@ -52,7 +54,8 @@ var cmdCtTrackTcp = &cobra.Command{
 }
 
 func init() {
-	cmdCt.PersistentFlags().IntP("zone", "z", -1, "zone id, -1: use cli parameter, >=0: use ct")
+	//cmdCt.PersistentFlags().IntP("zone", "z", -1, "zone id, -1: use cli parameter, >=0: use ct")
+	cmdCt.PersistentFlags().IntVarP(&paramZone, "zone", "z", 01, "zone")
 	viper.BindPFlag("zone", cmdCt.PersistentFlags().Lookup("zone"))
 
 	cmdCt.AddCommand(cmdCtShow)
@@ -96,10 +99,12 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 	log.Debugf("Reset Conntracks")
 
 	vni := viper.GetUint32("vni")
-	zone := viper.GetInt("zone")
+	zone := paramZone
+	log.Debugf("Zone=%d", zone)
 
 	var err error
 	var tcpInfo *TcpInfo
+	var tcpInfo1 *TcpInfo = &TcpInfo{}
 	var vxlanInfo *VxlanInfo
 
 	if vni != 0 {
@@ -111,13 +116,23 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 	}
 
 	if zone == -1 {
-		tcpInfo, err = getTcpInfo()
+		tcpInfo, err = GetTcpInfoFromCli()
 		if err != nil {
 			log.Errorf("failed to get tcpinfo: err=%v", err)
 			return
 		}
 	} else {
-		tcpInfo, err = getConntrack(zone)
+		sport := viper.GetUint16("sport")
+		dport := viper.GetUint16("dport")
+
+		c, err := conntrack.Dial(nil)
+		if err != nil {
+			log.Errorf("failed to connect netlink: err=%v", err)
+			return
+		}
+		defer c.Close()
+
+		tcpInfo, err = GetTcpInfoFromConntrack(c, uint32(zone), sport, dport)
 		if err != nil {
 			log.Errorf("failed to get ct: err=%v", err)
 			return
@@ -125,9 +140,11 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 	}
 
 	if tcpInfo == nil {
-		log.Errorf("no TcpInfo")
+		log.Errorf("No TcpInfo")
 		return
 	}
+
+	fmt.Printf("TCPInfo: %+v \n", tcpInfo)
 
 	err = getInnerMac(tcpInfo)
 	if err != nil {
@@ -135,10 +152,26 @@ func runCmdCtReset(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	/*
+		// XXXX: need arp for server and client in NLB host
+		sudo arp -s 3.3.3.11 52:54:88:88:89:0b
+		sudo arp -s 3.3.3.21 52:54:88:88:89:15
+	*/
+
+	tcpInfo1.SrcMAC, _ = net.ParseMAC(tcpInfo.DstMAC.String())
+	tcpInfo1.DstMAC, _ = net.ParseMAC(tcpInfo.SrcMAC.String())
+	tcpInfo1.SrcIp, _ = netip.ParseAddr(tcpInfo.DstIp.String())
+	tcpInfo1.DstIp, _ = netip.ParseAddr(tcpInfo.SrcIp.String())
+	tcpInfo1.SrcPort = tcpInfo.DstPort
+	tcpInfo1.DstPort = tcpInfo.SrcPort
+	tcpInfo1.Seq = tcpInfo.Ack
+	tcpInfo1.Ack = tcpInfo.Seq
+
 	SendTcpReset(tcpInfo, vxlanInfo)
+	SendTcpReset(tcpInfo1, vxlanInfo)
 }
 
-func getTcpInfo() (*TcpInfo, error) {
+func GetTcpInfoFromCli() (*TcpInfo, error) {
 	sip := viper.GetString("sip")
 	dip := viper.GetString("dip")
 	sport := viper.GetUint16("sport")
@@ -208,7 +241,7 @@ func getVxLanInfo() (*VxlanInfo, error) {
 
 func getInnerMac(tcpInfo *TcpInfo) error {
 	smac := viper.GetString("smac")
-	dmac := viper.GetString("smac")
+	dmac := viper.GetString("dmac")
 
 	if len(smac) > 1 {
 		smacAddr, err := net.ParseMAC(smac)
@@ -231,28 +264,19 @@ func getInnerMac(tcpInfo *TcpInfo) error {
 	return nil
 }
 
-func getConntrack(zone int) (*TcpInfo, error) {
-	sport := viper.GetUint16("sport")
-	dport := viper.GetUint16("dport")
-
-	c, err := conntrack.Dial(nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var f *conntrack.FilterZone
-	f = &conntrack.FilterZone{
+func GetTcpInfoFromConntrack(conn *conntrack.Conn, zone uint32, sport uint16, dport uint16) (*TcpInfo, error) {
+	var zf *conntrack.FilterZone
+	zf = &conntrack.FilterZone{
 		Zone: uint16(zone),
 	}
 
-	cts, err := c.DumpFilter(f, nil)
+	cts, err := conn.DumpFilter(zf, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	var tcpInfo *TcpInfo
 
-	var i int
 	for _, ct := range cts {
 		if ct.ProtoInfo.TCP == nil {
 			continue
@@ -264,17 +288,12 @@ func getConntrack(zone int) (*TcpInfo, error) {
 			continue
 		}
 
-		fmt.Printf("CT(%d): %+v \n", i+1, ct)
-		fmt.Printf("  TCP: %+v \n", *ct.ProtoInfo.TCP)
-
 		if ct.ProtoInfo.TCP.SeqTrack != nil {
-			fmt.Printf("  TCP SEQ: %+v \n", *ct.ProtoInfo.TCP.SeqTrack)
-			//tcpReset(&ct, vxlanInfo)
-
 			tuple := &ct.TupleOrig
 			seqTrk := ct.ProtoInfo.TCP.SeqTrack
 
 			tcpInfo = &TcpInfo{
+				Id:      ct.ID,
 				SrcIp:   tuple.IP.DestinationAddress,
 				DstIp:   tuple.IP.SourceAddress,
 				SrcPort: tuple.Proto.DestinationPort,
@@ -290,27 +309,12 @@ func getConntrack(zone int) (*TcpInfo, error) {
 	return tcpInfo, nil
 }
 
-func tcpReset(ct *conntrack.Flow, vxlanInfo *VxlanInfo) {
-	tuple := &ct.TupleOrig
-	seqTrk := ct.ProtoInfo.TCP.SeqTrack
-
-	tcpInfo := TcpInfo{
-		SrcIp:   tuple.IP.DestinationAddress,
-		DstIp:   tuple.IP.SourceAddress,
-		SrcPort: tuple.Proto.DestinationPort,
-		DstPort: tuple.Proto.SourcePort,
-		Seq:     seqTrk.LastAck,
-		Ack:     seqTrk.LastSeq,
-	}
-
-	SendTcpReset(&tcpInfo, vxlanInfo)
-}
-
 func runCmdCtShow(cmd *cobra.Command, args []string) {
 	log.Debugf("Show Conntracks")
 
 	//OpenFlowListenAddr: viper.GetString(KeyOpenFlowListenAddr),
-	zone := viper.GetInt("zone")
+	zone := paramZone
+	log.Debugf("zone=%d", zone)
 
 	c, err := conntrack.Dial(nil)
 	if err != nil {
@@ -352,10 +356,12 @@ func runCmdCtAdd(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	zone := viper.GetInt("zone")
+	//zone := viper.GetInt("zone")
+	zone := paramZone
 	if zone == -1 {
 		zone = 0
 	}
+	log.Debugf("Zone=%d", zone)
 
 	for srcPort := 1; srcPort <= 1; srcPort++ {
 		f1 := conntrack.NewFlow(
@@ -376,7 +382,9 @@ func runCmdCtAdd(cmd *cobra.Command, args []string) {
 func runCmdCtFlush(cmd *cobra.Command, args []string) {
 	log.Debugf("Flush Conntracks")
 
-	zone := viper.GetInt("zone")
+	//zone := viper.GetInt("zone")
+	zone := paramZone
+	log.Debugf("Zone=%d", zone)
 	var f *conntrack.FilterZone
 	if zone != -1 {
 		f = &conntrack.FilterZone{
