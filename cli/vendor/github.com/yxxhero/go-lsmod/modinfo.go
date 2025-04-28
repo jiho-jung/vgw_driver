@@ -6,6 +6,6 @@ type ModInfo struct {
 	Mem       uint64
 	Instances uint64
 	Offset    uint64
-	Tained    modTained
+	Taineds   []modTained
 	State     modState
 }

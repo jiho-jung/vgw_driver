@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 
-	lsmod "github.com/Djarvur/go-lsmod"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/subchen/go-log"
+	lsmod "github.com/yxxhero/go-lsmod"
 	"pault.ag/go/modprobe"
 )
 
@@ -61,17 +62,71 @@ func init() {
 	RootCmd.AddCommand(cmdMod)
 }
 
+func int8ToStr(arr []int8) string {
+	b := make([]byte, 0, len(arr))
+	for _, v := range arr {
+		if v == 0x00 {
+			break
+		}
+		b = append(b, byte(v))
+	}
+	return string(b)
+}
+
+func GetOsRelease() string {
+	var uname syscall.Utsname
+	if err := syscall.Uname(&uname); err == nil {
+		// extract members:
+		// type Utsname struct {
+		//  Sysname    [65]int8
+		//  Nodename   [65]int8
+		//  Release    [65]int8
+		//  Version    [65]int8
+		//  Machine    [65]int8
+		//  Domainname [65]int8
+		// }
+
+		/*
+			fmt.Printf("### name: %s \n", int8ToStr(uname.Sysname[:]))
+			fmt.Printf("### release: %s \n", int8ToStr(uname.Release[:]))
+			fmt.Printf("### version: %s \n", int8ToStr(uname.Version[:]))
+		*/
+
+		rel := int8ToStr(uname.Release[:])
+
+		return rel
+	}
+
+	return ""
+}
+
 func runModLoad(cmd *cobra.Command, args []string) {
 	log.Debugf("Load Module")
 
-	kname := viper.GetString("name")
 	kpath := viper.GetString("path")
+	if len(kpath) < 1 {
+		kpath = "/opt/kraken/kmod"
+	}
+
+	kname := viper.GetString("name")
+	if len(kname) < 1 {
+		kname = "vgw_driver"
+
+		rel := GetOsRelease()
+		if len(rel) > 1 {
+			// vgw_driver_5.14.0-362.8.1.el9_3.x86_64.ko
+			kname += "_" + rel
+		}
+
+		kname += ".ko"
+	}
 
 	if len(kname) < 1 {
 		log.Errorf("Module name is empyt")
 		return
 	}
 
+	log.Infof("Load kernel module: %s/%s", kpath, kname)
 	err := loadDriver(kpath, kname)
 	if err != nil {
 		log.Errorf("%v", err)
@@ -111,7 +166,7 @@ func runModProbe(cmd *cobra.Command, args []string) {
 }
 
 func runModList(cmd *cobra.Command, args []string) {
-	log.Debugf("LIst Module")
+	log.Debugf("List Module")
 
 	kname := viper.GetString("name")
 	if len(kname) < 1 {
@@ -165,7 +220,7 @@ func listDriver(kname string) error {
 		return fmt.Errorf("Module name is empyt")
 	}
 
-	mods, err := lsmod.LsMod()
+	mods, err := lsmod.LsMod("")
 	if err != nil {
 		return fmt.Errorf("failed to list module info: err=%s", err)
 	}

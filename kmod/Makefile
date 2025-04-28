@@ -10,6 +10,7 @@ else
 BASEDIR := /lib/modules/$(shell uname -r)
 KERNELDIR ?= $(BASEDIR)/build
 PWD :=$(shell pwd)
+KRELEASE := $(shell uname -r)
 
 #KERNEL_GCC_VERSION := $(shell cat /proc/version | sed -n 's/.*gcc version \([[:digit:]]\.[[:digit:]]\.[[:digit:]]\).*/\1/p')
 #CCVERSION = $(shell $(CC) -dumpversion)
@@ -41,7 +42,8 @@ EXT_FLAGS+=-DEXT_VER=$(EXT_VER)
 
 
 .PHONY:all 
-all: clean modules #install
+#all: clean modules install
+all: modules install
 
 .PHONY:modules
 modules:
@@ -49,7 +51,8 @@ modules:
 
 .PHONY:install
 install:
-	make -C $(KERNELDIR) M=$(PWD) modules_install
+	#make -C $(KERNELDIR) M=$(PWD) modules_install
+	sudo cp $(MODULE_NAME).ko /opt/kraken/kmod/$(MODULE_NAME)_$(KRELEASE).ko
 
 .PHONY:clean 
 clean:

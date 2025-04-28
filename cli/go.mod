@@ -3,7 +3,6 @@ module github.com/vgw_driver
 go 1.24.2
 
 require (
-	github.com/Djarvur/go-lsmod v0.0.0-20190124055245-f58e2c8a3519
 	github.com/cilium/ebpf v0.18.0
 	github.com/google/gopacket v1.1.19
 	github.com/josharian/native v1.1.0
@@ -13,6 +12,7 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/subchen/go-log v3.0.0+incompatible
 	github.com/ti-mo/conntrack v0.5.1
+	github.com/yxxhero/go-lsmod v0.0.3
 	golang.org/x/net v0.36.0
 	golang.org/x/sys v0.30.0
 	pault.ag/go/modprobe v0.2.0

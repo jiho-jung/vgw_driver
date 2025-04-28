@@ -1,6 +1,9 @@
 package lsmod
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type modTained uint32
 
@@ -27,90 +30,54 @@ const (
 	TainedT    modTained = 131072 // (T): The kernel was built with the struct randomization plugin.
 )
 
-func parseTained(t string) (modTained, error) { // nolint: gocyclo
-	switch t {
-	case "(P)":
-		return TainedP, nil
-	case "(F)":
-		return TainedF, nil
-	case "(S)":
-		return TainedS, nil
-	case "(R)":
-		return TainedR, nil
-	case "(M)":
-		return TainedM, nil
-	case "(B)":
-		return TainedB, nil
-	case "(U)":
-		return TainedU, nil
-	case "(D)":
-		return TainedD, nil
-	case "(A)":
-		return TainedA, nil
-	case "(W)":
-		return TainedW, nil
-	case "(C)":
-		return TainedC, nil
-	case "(I)":
-		return TainedI, nil
-	case "(O)":
-		return TainedO, nil
-	case "(E)":
-		return TainedE, nil
-	case "(L)":
-		return TainedL, nil
-	case "(K)":
-		return TainedK, nil
-	case "(X)":
-		return TainedX, nil
-	case "(T)":
-		return TainedT, nil
+func parseTained(tg string) ([]modTained, error) { // nolint: gocyclo
+	result := []modTained{}
+	tTrim := strings.Trim(tg, "()")
+	for i := 0; i < len(tTrim); i++ {
+		t := string(tTrim[i])
+		switch t {
+		case "P":
+			result = append(result, TainedP)
+		case "F":
+			result = append(result, TainedF)
+		case "S":
+			result = append(result, TainedS)
+		case "R":
+			result = append(result, TainedR)
+		case "M":
+			result = append(result, TainedM)
+		case "B":
+			result = append(result, TainedB)
+		case "U":
+			result = append(result, TainedU)
+		case "D":
+			result = append(result, TainedD)
+		case "A":
+			result = append(result, TainedA)
+		case "W":
+			result = append(result, TainedW)
+		case "C":
+			result = append(result, TainedC)
+		case "I":
+			result = append(result, TainedI)
+		case "O":
+			result = append(result, TainedO)
+		case "E":
+			result = append(result, TainedE)
+		case "L":
+			result = append(result, TainedL)
+		case "K":
+			result = append(result, TainedK)
+		case "X":
+			result = append(result, TainedX)
+		case "T":
+			result = append(result, TainedT)
+		}
 	}
 
-	return 0, fmt.Errorf("unknown tained flag %q", t)
-}
-
-func (t modTained) String() string { // nolint: gocyclo
-	switch t {
-	case TainedNone:
-		return "()"
-	case TainedP:
-		return "(P)"
-	case TainedF:
-		return "(F)"
-	case TainedS:
-		return "(S)"
-	case TainedR:
-		return "(R)"
-	case TainedM:
-		return "(M)"
-	case TainedB:
-		return "(B)"
-	case TainedU:
-		return "(U)"
-	case TainedD:
-		return "(D)"
-	case TainedA:
-		return "(A)"
-	case TainedW:
-		return "(W)"
-	case TainedC:
-		return "(C)"
-	case TainedI:
-		return "(I)"
-	case TainedO:
-		return "(O)"
-	case TainedE:
-		return "(E)"
-	case TainedL:
-		return "(L)"
-	case TainedK:
-		return "(K)"
-	case TainedX:
-		return "(X)"
-	case TainedT:
-		return "(T)"
+	if len(result) == 0 {
+		return nil, fmt.Errorf("unknown tained flag %q", tg)
 	}
 
-	panic(fmt.Errorf("unknown tained flag %d", t))
+	return result, nil
 }

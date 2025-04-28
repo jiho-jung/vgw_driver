@@ -1,6 +1,3 @@
-# github.com/Djarvur/go-lsmod v0.0.0-20190124055245-f58e2c8a3519
-## explicit
-github.com/Djarvur/go-lsmod
 # github.com/cilium/ebpf v0.18.0
 ## explicit; go 1.23.0
 github.com/cilium/ebpf
@@ -123,6 +120,9 @@ github.com/ti-mo/netfilter
 # github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8
 ## explicit
 github.com/xi2/xz
+# github.com/yxxhero/go-lsmod v0.0.3
+## explicit; go 1.23.1
+github.com/yxxhero/go-lsmod
 # go.uber.org/atomic v1.9.0
 ## explicit; go 1.13
 go.uber.org/atomic

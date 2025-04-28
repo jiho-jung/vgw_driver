@@ -1,8 +1,13 @@
 package lsmod
 
+import (
+	"path/filepath"
+)
+
 // IsLoaded just check if the specified module loaded
-func IsLoaded(name string) (bool, error) {
-	mods, err := LsMod()
+func IsLoaded(hostRoot, name string) (bool, error) {
+	procModulesFile := filepath.Join(hostRoot, "proc", "modules")
+	mods, err := LsMod(procModulesFile)
 	if err != nil {
 		return false, err
 	}

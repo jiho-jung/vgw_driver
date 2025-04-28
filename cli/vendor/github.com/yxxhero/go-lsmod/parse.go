@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	// ProcModules is a path to pseudo-file to parse
-	ProcModules = "/proc/modules"
+	// DefaultProcModules is a path to pseudo-file to parse
+	DefaultProcModules = "/proc/modules"
 
 	minFieldsPerLine = 6
 	maxFieldsPerLine = 7
@@ -20,12 +20,19 @@ const (
 	delimDeps        = ","
 )
 
-func parse(fileName string) (map[string]ModInfo, error) {
-	file, err := os.Open(fileName) // nolint: gosec
-	if err != nil {
-		return nil, errors.Wrapf(err, "Error opening %q", fileName)
+func parse(procModulesFile string) (map[string]ModInfo, error) {
+	// if procModulesFile is empty, use default
+	if procModulesFile == "" {
+		procModulesFile = DefaultProcModules
 	}
-	defer file.Close() // nolint: errcheck
+
+	file, err := os.Open(procModulesFile)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Error opening %q", procModulesFile)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
 
 	mods := make(map[string]ModInfo)
 
@@ -38,17 +45,16 @@ func parse(fileName string) (map[string]ModInfo, error) {
 			return nil, fmt.Errorf("invalid input line %q", line)
 		}
 
-		info, err := parseInfo(fields) // nolint: govet
+		info, err := parseInfo(fields)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error parsing %q", ProcModules)
+			return nil, errors.Wrapf(err, "error parsing %q", procModulesFile)
 		}
 
 		mods[fields[0]] = info
 	}
 
-	err = scanner.Err()
-	if err != nil {
-		return nil, errors.Wrapf(err, "Error reading %q", ProcModules)
+	if err := scanner.Err(); err != nil {
+		return nil, errors.Wrapf(err, "Error reading %q", procModulesFile)
 	}
 
 	return mods, nil
@@ -78,7 +84,7 @@ func parseInfo(fields []string) (info ModInfo, err error) {
 	}
 
 	if len(fields) == maxFieldsPerLine {
-		info.Tained, err = parseTained(fields[6])
+		info.Taineds, err = parseTained(fields[6])
 		if err != nil {
 			return info, errors.Wrap(err, "unknown tained (field 7)")
 		}
