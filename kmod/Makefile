@@ -52,7 +52,8 @@ modules:
 .PHONY:install
 install:
 	#make -C $(KERNELDIR) M=$(PWD) modules_install
-	sudo cp $(MODULE_NAME).ko /opt/kraken/kmod/$(MODULE_NAME)_$(KRELEASE).ko
+	#sudo cp $(MODULE_NAME).ko /opt/kraken/kmod/$(MODULE_NAME)_$(KRELEASE).ko
+	cp $(MODULE_NAME).ko $(MODULE_NAME)_$(KRELEASE).ko
 
 .PHONY:clean 
 clean:
