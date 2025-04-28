@@ -172,7 +172,6 @@ dump_ip_tuple(struct nf_conn *ct, enum ip_conntrack_info ctinfo, const struct tc
 	t = &ct->tuplehash[dir].tuple;
 
 	printk("tcptrack tuple: %u %pI4:%hu->%pI4:%hu syn=%i(%u) ack=%i(%u) fin=%i rst=%i\n",
-	printk("tcptrack tuple: %u %pI4:%hu -> %pI4:%hu syn=%i(%u) ack=%i(%u) fin=%i rst=%i\n",
 		   t->dst.protonum,
 		   &t->src.u3.ip, ntohs(t->src.u.all),
 		   &t->dst.u3.ip, ntohs(t->dst.u.all),
