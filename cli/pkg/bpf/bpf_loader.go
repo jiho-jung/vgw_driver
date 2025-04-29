@@ -16,25 +16,17 @@ type BpfLoader interface {
 	Close()
 }
 
-type bpfLoader struct {
-	objs  *TcpBpfObjects
-	links []link.Link
-}
-
-func (loader *bpfLoader) Close() {
-	for _, l := range loader.links {
-		l.Close()
-	}
-
-	if loader.objs != nil {
-		loader.objs.Close()
-	}
-}
-
 func NewBpfLoader() (BpfLoader, error) {
 	loader := &bpfLoader{}
 
 	return loader, nil
+}
+
+///////////////////////////////
+
+type bpfLoader struct {
+	objs  *TcpBpfObjects
+	links []link.Link
 }
 
 func (bpfld *bpfLoader) Load(ctx context.Context) error {
@@ -56,6 +48,16 @@ func (bpfld *bpfLoader) Load(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (loader *bpfLoader) Close() {
+	for _, l := range loader.links {
+		l.Close()
+	}
+
+	if loader.objs != nil {
+		loader.objs.Close()
+	}
 }
 
 func addLink(loader *bpfLoader, pg *ebpf.Program) error {
