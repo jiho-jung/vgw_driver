@@ -46,10 +46,12 @@ func runCmdBpfRun(cmd *cobra.Command, args []string) {
 
 	vgwBpf, err := bpf.NewBpfLoader()
 	if err != nil {
+		fmt.Printf("failed to create bpf: err=%v \n", err)
+		return
+	} else if err = vgwBpf.Load(ctx); err != nil {
 		fmt.Printf("failed to load bpf: err=%v \n", err)
 		return
 	}
-
 	defer vgwBpf.Close()
 
 	log.Debugf("Waiting %d sec", w)

@@ -3,6 +3,7 @@
 package bpf
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/cilium/ebpf"
@@ -10,12 +11,17 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-type BpfLoader struct {
+type BpfLoader interface {
+	Load(ctx context.Context) error
+	Close()
+}
+
+type bpfLoader struct {
 	objs  *TcpBpfObjects
 	links []link.Link
 }
 
-func (loader *BpfLoader) Close() {
+func (loader *bpfLoader) Close() {
 	for _, l := range loader.links {
 		l.Close()
 	}
@@ -25,28 +31,34 @@ func (loader *BpfLoader) Close() {
 	}
 }
 
-func NewBpfLoader() (*BpfLoader, error) {
-	loader := &BpfLoader{}
+func NewBpfLoader() (BpfLoader, error) {
+	loader := &bpfLoader{}
 
+	return loader, nil
+}
+
+func (bpfld *bpfLoader) Load(ctx context.Context) error {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
-		return loader, err
+		return err
 	}
 
 	// Load pre-compiled programs and maps into the kernel.
 	objs := &TcpBpfObjects{}
 	if err := LoadTcpBpfObjects(objs, nil); err != nil {
-		return loader, fmt.Errorf("loading objects: %v", err)
+		return fmt.Errorf("failed to load objects: err=%v", err)
 	}
 
 	loader.objs = objs
+	err := addLink(loader, objs.OvsCtExecute)
+	if err != nil {
+		return err
+	}
 
-	addLink(loader, objs.OvsCtExecute)
-
-	return loader, nil
+	return nil
 }
 
-func addLink(loader *BpfLoader, pg *ebpf.Program) error {
+func addLink(loader *bpfLoader, pg *ebpf.Program) error {
 	lk, err := link.AttachTracing(link.TracingOptions{
 		Program: pg,
 	})
