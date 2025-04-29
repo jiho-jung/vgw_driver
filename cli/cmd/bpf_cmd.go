@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -48,7 +49,7 @@ func runCmdBpfRun(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Printf("failed to create bpf: err=%v \n", err)
 		return
-	} else if err = vgwBpf.Load(ctx); err != nil {
+	} else if err = vgwBpf.Load(context.Background()); err != nil {
 		fmt.Printf("failed to load bpf: err=%v \n", err)
 		return
 	}

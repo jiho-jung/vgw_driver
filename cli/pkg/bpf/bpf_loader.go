@@ -29,7 +29,7 @@ type bpfLoader struct {
 	links []link.Link
 }
 
-func (bpfld *bpfLoader) Load(ctx context.Context) error {
+func (loader *bpfLoader) Load(ctx context.Context) error {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return err
