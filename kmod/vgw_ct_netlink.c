@@ -211,10 +211,12 @@ static int ctnetlink_dump_protoinfo(struct sk_buff *skb, struct nf_conn *ct,
 	struct nlattr *nest_proto;
 	int ret;
 
-	u_int8_t proto = nf_ct_protonum(ct);
-	if (proto == IPPROTO_TCP) {
-		// tcp seq/ack for vgatway
-		return vgw_dump_tcp_protoinfo(skb, ct, destroy);
+	if (is_enable_export_tcp_track()) {
+		u_int8_t proto = nf_ct_protonum(ct);
+		if (proto == IPPROTO_TCP) {
+			// tcp seq/ack for vgatway
+			return vgw_dump_tcp_protoinfo(skb, ct, destroy);
+		}
 	}
 
 	l4proto = nf_ct_l4proto_find(nf_ct_protonum(ct));

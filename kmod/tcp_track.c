@@ -29,22 +29,16 @@
 #include <net/netfilter/nf_conntrack_core.h>
 
 #include "vgw_version.h"
+#include "tcp_session.h"
 
 ////////////////////////
 
-#define FLAGS_ZONE_FILTER	0x01
-#define FLAGS_DUMP_PKT		0x02
-
 // RW: /sys/module/vgw_driver/parameters/
 
-uint32_t enable_tcptrack = 1;
-uint32_t tcptrack_flags = FLAGS_ZONE_FILTER;
+uint32_t tcptrack_flags = FLAGS_ZONE_FILTER | FLAGS_TCP_TRACK;
 
 // ovs port range in vgateway: 100 ~ 2099(2K)
 uint32_t zone_range[2] = {100, 2099}; // min,max
-
-module_param(enable_tcptrack, uint, 0644);
-MODULE_PARM_DESC(enable_tcptrack, "Enable tracking TCP SEQ/ACK");
 
 module_param(tcptrack_flags, uint, 0644);
 MODULE_PARM_DESC(tcptrack_flags, "Flags of tcptrack");
@@ -225,7 +219,7 @@ dump_skb(const struct sk_buff *skb, struct nf_conn *ct, int ctst, u16 zone)
 static bool 
 check_zone_id(uint16_t zone_id) 
 {
-	if (!(tcptrack_flags & FLAGS_ZONE_FILTER)) {
+	if (!is_enable_zone_filter()) {
 		return true;
 	} else if (zone_range[0] <= zone_id && zone_id <= zone_range[1]) {
 		return true;
@@ -277,7 +271,7 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 	struct nf_conntrack_zone nf_zone;
 	uint32_t last_ack, last_seq;
 
-	if (!enable_tcptrack) {
+	if (!is_enable_tcp_track()) {
 		return 0;
 	} else if (!check_zone_id(zone)) {
 		return 0;
@@ -347,7 +341,7 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 		goto out;
 	}
 
-	if (tcptrack_flags & FLAGS_DUMP_PKT) {
+	if (is_enable_dump_packet()) {
 		dump_skb((const struct sk_buff *)skb, ct, ctinfo, zone);
 	}
 

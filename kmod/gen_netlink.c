@@ -28,7 +28,7 @@
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_conntrack.h>
 
-#include "vgw_netlink.h"
+#include "gen_netlink.h"
 #include "vgw_version.h"
 
 // https://www.electronicsfaq.com/2014/02/generic-netlink-sockets-example-code.html

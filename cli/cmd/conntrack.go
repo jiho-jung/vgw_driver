@@ -5,6 +5,8 @@ import (
 	"io/ioutil"
 	"net"
 	"net/netip"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -47,15 +49,15 @@ var cmdCtReset = &cobra.Command{
 	Run:   runCmdCtReset,
 }
 
-var cmdCtTrackTcp = &cobra.Command{
+var cmdCtTrackFlag = &cobra.Command{
 	Use:   "track",
-	Short: "track tcp seq/ack",
-	Run:   runCmdCtTrackTcp,
+	Short: "track flags",
+	Run:   runCmdCtTrackFlag,
 }
 
 func init() {
 	//cmdCt.PersistentFlags().IntP("zone", "z", -1, "zone id, -1: use cli parameter, >=0: use ct")
-	cmdCt.PersistentFlags().IntVarP(&paramZone, "zone", "z", 01, "zone")
+	cmdCt.PersistentFlags().IntVarP(&paramZone, "zone", "z", 0, "zone")
 	viper.BindPFlag("zone", cmdCt.PersistentFlags().Lookup("zone"))
 
 	cmdCt.AddCommand(cmdCtShow)
@@ -85,11 +87,15 @@ func init() {
 	}
 	cmdCt.AddCommand(cmdCtReset)
 
-	cmdCtTrackTcp.Flags().IntP("value", "", -1, "set track tcp seq/ack, -1: show")
-	if err := viper.BindPFlags(cmdCtTrackTcp.Flags()); err != nil {
+	cmdCtTrackFlag.Flags().IntP("tcp-track", "", -1, "tcp track")
+	cmdCtTrackFlag.Flags().IntP("zone-filter", "", -1, "zonefilter")
+	cmdCtTrackFlag.Flags().IntP("export-tcp-track", "", -1, "export tcp track info")
+	cmdCtTrackFlag.Flags().IntP("dump-pkt", "", -1, "dump pkt")
+
+	if err := viper.BindPFlags(cmdCtTrackFlag.Flags()); err != nil {
 		log.Errorf("failed to dump p-flags: %v", err)
 	}
-	cmdCt.AddCommand(cmdCtTrackTcp)
+	cmdCt.AddCommand(cmdCtTrackFlag)
 
 	// ct root cmd
 	RootCmd.AddCommand(cmdCt)
@@ -407,34 +413,101 @@ func runCmdCtFlush(cmd *cobra.Command, args []string) {
 	}
 }
 
-func runCmdCtTrackTcp(cmd *cobra.Command, args []string) {
-	log.Debugf("Set Track TCP SEQ/ACK")
+const (
+	ENABLE_TCP_TRACK        = 0x01
+	ENABLE_ZONE_FILTER      = 0x02
+	ENABLE_EXPORT_TCP_TRACK = 0x04
+	ENABLE_DUMP_PKT         = 0x08
+)
 
-	fname := "/sys/module/vgw_driver/parameters/enable_tcptrack"
-	value := viper.GetInt("value")
+func setFlag(dest *uint32, val int, mask uint32) {
+	fmt.Printf("dest=0x%x, val=%d, mask=0x%x \n", *dest, val, mask)
 
-	if value == -1 {
-		v, err := readSysfs(fname)
-		if err != nil {
-			log.Errorf("failed to read fs: filename=%s, err=%v", fname, err)
-			return
+	if val == 1 {
+		*dest |= mask
+	} else if val == 0 {
+		*dest &= ^mask
+	}
+}
+
+func runCmdCtTrackFlag(cmd *cobra.Command, args []string) {
+	log.Debugf("TCP Track Flags")
+
+	fname := "/sys/module/vgw_driver/parameters/tcptrack_flags"
+	val := readVal(fname)
+
+	enable_tcp_track := viper.GetInt("tcp-track")
+	enable_zone_filter := viper.GetInt("zone-filter")
+	enable_export_tcp_track := viper.GetInt("export-tcp-track")
+	enable_dump_pkt := viper.GetInt("dump-pkt")
+
+	show := enable_tcp_track == -1 &&
+		enable_zone_filter == -1 &&
+		enable_export_tcp_track == -1 &&
+		enable_dump_pkt == -1
+
+	if show {
+		fmt.Printf("current val=0x%x \n", val)
+
+		var s string
+		if val&ENABLE_TCP_TRACK != 0 {
+			s += "enable_tcp_track "
 		}
 
-		fmt.Printf("%s:%s \n", fname, v)
-	} else if value == 1 {
-		err := writeSysfs(fname, "1")
-		if err != nil {
-			log.Errorf("failed to write fs: filename=%s, err=%v", fname, err)
-			return
+		if val&ENABLE_ZONE_FILTER != 0 {
+			s += "enable_zone_filter "
 		}
-	} else if value == 0 {
-		err := writeSysfs(fname, "0")
-		if err != nil {
-			log.Errorf("failed to write fs: filename=%s, err=%v", fname, err)
-			return
+
+		if val&ENABLE_EXPORT_TCP_TRACK != 0 {
+			s += "enable_export_tcp_track "
 		}
-	} else {
-		log.Errorf("not supported value: value=%d", value)
+
+		if val&ENABLE_DUMP_PKT != 0 {
+			s += "enable_dump_pkt "
+		}
+
+		fmt.Printf("tcp_flags: %s \n", s)
+		return
+	}
+
+	val1 := val
+	setFlag(&val1, enable_tcp_track, ENABLE_TCP_TRACK)
+	setFlag(&val1, enable_zone_filter, ENABLE_ZONE_FILTER)
+	setFlag(&val1, enable_export_tcp_track, ENABLE_EXPORT_TCP_TRACK)
+	setFlag(&val1, enable_dump_pkt, ENABLE_DUMP_PKT)
+
+	fmt.Printf("change val=0x%x -> 0x%x \n", val, val1)
+	writeVal(fname, val1)
+
+	val2 := readVal(fname)
+	if val2 != val1 {
+		log.Errorf("failed to write val: expected 0x%x != current 0x%x", val1, val2)
+	}
+}
+
+func readVal(fname string) uint32 {
+	v, err := readSysfs(fname)
+	if err != nil {
+		log.Errorf("failed to read fs: filename=%s, err=%v", fname, err)
+		return 0
+	}
+
+	v = strings.TrimSpace(v)
+	v1, err := strconv.Atoi(v)
+	if err != nil {
+		log.Errorf("failed to conv string: %s, err=%v", v, err)
+		return 0
+	}
+
+	return uint32(v1)
+}
+
+func writeVal(fname string, val uint32) {
+	s := fmt.Sprintf("%d", val)
+	err := writeSysfs(fname, s)
+	if err != nil {
+		log.Errorf("failed to write fs: filename=%s, err=%v", fname, err)
+		return
 	}
 }
 
