@@ -55,8 +55,8 @@
 #include <linux/netfilter/nfnetlink_conntrack.h>
 
 #include "nf_internals.h"
-#include "tcp_session.h"
 #include "vgw_version.h"
+#include "tcp_session.h"
 
 int vgw_tcptrack_init(void);
 void vgw_tcptrack_exit(void);
