@@ -87,10 +87,10 @@ func init() {
 	}
 	cmdCt.AddCommand(cmdCtReset)
 
-	cmdCtTrackFlag.Flags().IntP("tcp-track", "", -1, "tcp track")
-	cmdCtTrackFlag.Flags().IntP("zone-filter", "", -1, "zonefilter")
-	cmdCtTrackFlag.Flags().IntP("export-tcp-track", "", -1, "export tcp track info")
-	cmdCtTrackFlag.Flags().IntP("dump-pkt", "", -1, "dump pkt")
+	cmdCtTrackFlag.Flags().IntP("tcp-track", "", -1, "set tcp-track: -1: show, 1: enable, 0: disbale")
+	cmdCtTrackFlag.Flags().IntP("zone-filter", "", -1, "set zone- filter: -1: show, 1: enable, 0: disable")
+	cmdCtTrackFlag.Flags().IntP("export-tcp-track", "", -1, "set export-tcp-track: -1: show, 1: enable, 0: disable")
+	cmdCtTrackFlag.Flags().IntP("dump-pkt", "", -1, "set dump-pkt: -1: show, 1: enable, 0: disable")
 
 	if err := viper.BindPFlags(cmdCtTrackFlag.Flags()); err != nil {
 		log.Errorf("failed to dump p-flags: %v", err)
