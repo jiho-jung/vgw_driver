@@ -37,7 +37,7 @@
 
 // RW: /sys/module/vgw_driver/parameters/
 
-uint32_t tcptrack_flags = FLAGS_ZONE_FILTER | FLAGS_TCP_TRACK | FLAGS_DUMP_PKT | FLAGS_EXPORT_TCP_TRACK;
+uint32_t tcptrack_flags = FLAGS_ZONE_FILTER;
 
 // ovs port range in vgateway: 100 ~ 2099(2K)
 uint32_t zone_range[2] = {100, 2099}; // min,max
