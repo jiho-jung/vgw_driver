@@ -205,13 +205,13 @@ nla_put_failure:
 }
 
 static int ctnetlink_dump_protoinfo(struct sk_buff *skb, struct nf_conn *ct,
-				    bool destroy)
+				    bool destroy, unsigned int flags)
 {
 	const struct nf_conntrack_l4proto *l4proto;
 	struct nlattr *nest_proto;
 	int ret;
 
-	if (is_enable_export_tcp_track()) {
+	if (flags & NLM_F_DUMP_FILTERED && is_enable_export_tcp_track()) {
 		u_int8_t proto = nf_ct_protonum(ct);
 		if (proto == IPPROTO_TCP) {
 			// tcp seq/ack for vgatway
@@ -569,7 +569,7 @@ static int ctnetlink_dump_extinfo(struct sk_buff *skb,
 	return 0;
 }
 
-static int ctnetlink_dump_info(struct sk_buff *skb, struct nf_conn *ct)
+static int ctnetlink_dump_info(struct sk_buff *skb, struct nf_conn *ct, unsigned int flags)
 {
 	if (ctnetlink_dump_status(skb, ct) < 0 ||
 	    ctnetlink_dump_mark(skb, ct, true) < 0 ||
@@ -581,7 +581,7 @@ static int ctnetlink_dump_info(struct sk_buff *skb, struct nf_conn *ct)
 
 	if (!test_bit(IPS_OFFLOAD_BIT, &ct->status) &&
 	    (ctnetlink_dump_timeout(skb, ct, false) < 0 ||
-	     ctnetlink_dump_protoinfo(skb, ct, false) < 0))
+	     ctnetlink_dump_protoinfo(skb, ct, false, flags) < 0))
 		return -1;
 
 	return 0;
@@ -630,7 +630,7 @@ ctnetlink_fill_info(struct sk_buff *skb, u32 portid, u32 seq, u32 type,
 				   NF_CT_DEFAULT_ZONE_DIR) < 0)
 		goto nla_put_failure;
 
-	if (ctnetlink_dump_info(skb, ct) < 0)
+	if (ctnetlink_dump_info(skb, ct, flags) < 0)
 		goto nla_put_failure;
 	if (extinfo && ctnetlink_dump_extinfo(skb, ct, type) < 0)
 		goto nla_put_failure;
@@ -818,14 +818,14 @@ ctnetlink_conntrack_event(unsigned int events, const struct nf_ct_event *item)
 
 		if (ctnetlink_dump_acct(skb, ct, type) < 0 ||
 		    ctnetlink_dump_timestamp(skb, ct) < 0 ||
-		    ctnetlink_dump_protoinfo(skb, ct, true) < 0)
+		    ctnetlink_dump_protoinfo(skb, ct, true, 0) < 0)
 			goto nla_put_failure;
 	} else {
 		if (ctnetlink_dump_timeout(skb, ct, false) < 0)
 			goto nla_put_failure;
 
 		if (events & (1 << IPCT_PROTOINFO) &&
-		    ctnetlink_dump_protoinfo(skb, ct, false) < 0)
+		    ctnetlink_dump_protoinfo(skb, ct, false, 0) < 0)
 			goto nla_put_failure;
 
 		if ((events & (1 << IPCT_HELPER) || nfct_help(ct))
@@ -2752,7 +2752,7 @@ static int __ctnetlink_glue_build(struct sk_buff *skb, struct nf_conn *ct)
 	if (ctnetlink_dump_timeout(skb, ct, false) < 0)
 		goto nla_put_failure;
 
-	if (ctnetlink_dump_protoinfo(skb, ct, false) < 0)
+	if (ctnetlink_dump_protoinfo(skb, ct, false, 0) < 0)
 		goto nla_put_failure;
 
 	if (ctnetlink_dump_acct(skb, ct, IPCTNL_MSG_CT_GET) < 0 ||
