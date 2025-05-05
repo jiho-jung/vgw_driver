@@ -30,12 +30,14 @@
 
 #include "vgw_version.h"
 #include "tcp_session.h"
+#include "flow.h"
+#include "compatibility.h"
 
 ////////////////////////
 
 // RW: /sys/module/vgw_driver/parameters/
 
-uint32_t tcptrack_flags = FLAGS_ZONE_FILTER | FLAGS_TCP_TRACK;
+uint32_t tcptrack_flags = FLAGS_ZONE_FILTER | FLAGS_TCP_TRACK | FLAGS_DUMP_PKT | FLAGS_EXPORT_TCP_TRACK;
 
 // ovs port range in vgateway: 100 ~ 2099(2K)
 uint32_t zone_range[2] = {100, 2099}; // min,max
@@ -45,6 +47,9 @@ MODULE_PARM_DESC(tcptrack_flags, "Flags of tcptrack");
 
 module_param_array(zone_range, uint, NULL, 0644);
 MODULE_PARM_DESC(zone_range, "Zone Range to track TCP SEQ/ACK");
+
+int kprobe_init(void);
+void  kprobe_exit(void);
 
 /////////////////////////////////////
 
@@ -176,7 +181,7 @@ dump_ip_tuple(struct nf_conn *ct, enum ip_conntrack_info ctinfo, const struct tc
 }
 
 static void
-dump_skb(const struct sk_buff *skb, struct nf_conn *ct, int ctst, u16 zone)
+dump_skb(const struct sk_buff *skb, struct nf_conn *ct, uint32_t ctinfo, u16 zone, uint32_t ovs_st)
 {
 	u_int8_t protonum;
 	const struct iphdr *iph;
@@ -204,15 +209,17 @@ dump_skb(const struct sk_buff *skb, struct nf_conn *ct, int ctst, u16 zone)
 		return;
 	}
 
-	printk("tcptrack skb(0x%p): %u %pI4:%hu->%pI4:%hu syn=%i(%u) ack=%i(%u) fin=%i rst=%i dev=%s zone=%d\n",
+	printk("TCP Track skb=0x%p %u %pI4:%hu->%pI4:%hu S=%i:%u A=%i:%u %c%c ctinfo=0x%x ct_status=0x%lx ovs_st=0x%x zone=%d\n",
 		   skb,
 		   protonum,
 		   &iph->saddr, ntohs(th->source),
 		   &iph->daddr, ntohs(th->dest),
 		   (th->syn ? 1 : 0), ntohl(th->seq),
 		   (th->ack ? 1 : 0), ntohl(th->ack_seq),
-		   (th->fin ? 1 : 0), (th->rst ? 1 : 0),
-		   skb->dev ? skb->dev->name : "no dev", 
+		   (th->fin ? 'F' : ' '), (th->rst ? 'R' : ' '),
+		   ctinfo,
+		   ct->status,
+		   ovs_st,
 		   zone);
 }
 
@@ -256,8 +263,9 @@ static void set_ct_state(struct net* net, struct nf_conn *ct, enum tcp_conntrack
 	set_ct_timeout(net, ct, new_state);
 }
 
-__always_inline static unsigned int
-vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
+//__always_inline static unsigned int
+unsigned int
+vgw_tcptrack_main(struct net* net, struct sk_buff *skb, struct sw_flow_key *key, struct ovs_conntrack_info *info)
 {
 	enum ip_conntrack_info ctinfo = 0;
 	struct nf_conn *ct = NULL, *lookup_ct = NULL;
@@ -267,35 +275,44 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 	struct iphdr _iph;
 	const struct tcphdr *th;
 	struct tcphdr _tcph;
-	int nhoff;
+	int nhoff, ret=0;
 	struct nf_conntrack_zone nf_zone;
 	uint32_t last_ack, last_seq;
+	u16 family = info->family;
+	u16 zone = info->zone.id;
 
 	if (!is_enable_tcp_track()) {
-		return 0;
+		ret = -1;
+		goto out;
 	} else if (!check_zone_id(zone)) {
-		return 0;
+		ret = -2;
+		goto out;
 	}
 
 	nhoff = skb_network_offset(skb);
 	iph = skb_header_pointer(skb, nhoff, sizeof(_iph), &_iph);
 	if (!iph) {
-		return 0;
+		ret = -3;
+		goto out;
 	}
 
 	dataoff = ipv4_get_l4proto(skb, nhoff, &protonum);
 	if (dataoff <= 0) {
-		return 0;
+		ret = -4;
+		goto out;
 	} else if (protonum != IPPROTO_TCP) {
 		// TCP only
-		return 0;
+		ret = -5;
+		goto out;
 	}
 
 	th = skb_header_pointer(skb, dataoff, sizeof(_tcph), &_tcph);
 	if (th == NULL) {
-		return 0;
+		ret = -6;
+		goto out;
 	} else if (tcp_error(th, skb, dataoff)) {
-		return 0;
+		ret = -7;
+		goto out;
 	}
 
 	last_seq = ntohl(th->seq);
@@ -310,6 +327,7 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 		lookup_ct = lookup_conntrack_by_skb(net,  &nf_zone, family, skb, false);
 
 		if (lookup_ct == NULL) {
+			ret = -8;
 			goto out;
 		}
 
@@ -317,13 +335,14 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 	} 
 
 	if (th->syn && ct->proto.tcp.state != TCP_CONNTRACK_ESTABLISHED) {
-		//enum tcp_conntrack new_state = TCP_CONNTRACK_SYN_RECV;
-		enum tcp_conntrack new_state = TCP_CONNTRACK_ESTABLISHED;
+		enum tcp_conntrack new_state;
+		//ct->status |= IPS_CONFIRMED | IPS_ASSURED;
+		new_state = TCP_CONNTRACK_SYN_RECV;
 		set_ct_state(net, ct, new_state);
-		ct->status |= IPS_CONFIRMED | IPS_ASSURED;
-
-		// seq already updated
-		goto out;
+	} else if (th->ack && ct->proto.tcp.state < TCP_CONNTRACK_ESTABLISHED) {
+		enum tcp_conntrack new_state;
+		new_state = TCP_CONNTRACK_ESTABLISHED;
+		set_ct_state(net, ct, new_state);
 	} else if (th->fin) {
 		enum tcp_conntrack new_state = TCP_CONNTRACK_CLOSE_WAIT;
 		set_ct_state(net, ct, new_state);
@@ -332,17 +351,29 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, u16 family, u16 zone)
 		set_ct_state(net, ct, new_state);
 	} 
 
+	// adjust ovs.ct_state
+	if (ctinfo == IP_CT_ESTABLISHED) {
+		if (key->ct_state & OVS_CS_F_INVALID) {
+			key->ct_state &= ~OVS_CS_F_INVALID;
+		}
+
+		if (!(key->ct_state & OVS_CS_F_ESTABLISHED)) {
+			key->ct_state |= OVS_CS_F_ESTABLISHED;
+		}
+	}
+
 	if (last_seq == ct->proto.tcp.last_seq &&
 		last_ack == ct->proto.tcp.last_ack) {
 
-		//pr_info("tcptack: found ct with the same seq and skip, seq=%u:%u, ack=%u:%u \n", 
+		//pr_info("vgw_tcptrack_main: found ct with the same seq and skip, seq=%u:%u, ack=%u:%u \n", 
 		//		 ct->proto.tcp.last_seq, last_seq, ct->proto.tcp.last_ack, last_ack);
 
+		ret = -10;
 		goto out;
 	}
 
 	if (is_enable_dump_packet()) {
-		dump_skb((const struct sk_buff *)skb, ct, ctinfo, zone);
+		dump_skb((const struct sk_buff *)skb, ct, ctinfo, zone, key->ct_state);
 	}
 
 	/////////////////////
@@ -366,10 +397,16 @@ out:
 		nf_ct_put(lookup_ct);
 	}
 
+	if (ret != -10) {
+		//pr_info("vgw_tcptrack_main: ret=%d \n", ret);
+	}
+
 	return 0;
 }
 
 /////////////////////////////
+#if 0
+// use kprobe instead of bpf
 
 /* Begin kfunc definitions */
 
@@ -417,12 +454,14 @@ void cleanup_nf_conntrack_bpf(void)
 {
 
 }
+#endif
 
 int vgw_tcptrack_init(void) 
 {
 	pr_info("Init VGW tcptrack Module: %s\n", VERSION_STRING);
 
-	register_nf_conntrack_bpf();
+	//register_nf_conntrack_bpf();
+	kprobe_init();
 
 	return 0;
 }
@@ -431,6 +470,7 @@ void vgw_tcptrack_exit(void)
 {
 	pr_info("Exit VGW tcptrack Module: %s\n", VERSION_STRING);
 
-	cleanup_nf_conntrack_bpf();
+	//cleanup_nf_conntrack_bpf();
+	kprobe_exit();
 }
 
