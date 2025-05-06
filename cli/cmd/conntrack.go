@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -315,6 +316,54 @@ func GetTcpInfoFromConntrack(conn *conntrack.Conn, zone uint32, sport uint16, dp
 	return tcpInfo, nil
 }
 
+func formatCt(flows []conntrack.Flow) []string {
+	fmtProto := func(proto *conntrack.ProtoInfoTCP) string {
+		var s string
+		if proto == nil {
+			return ""
+		}
+
+		if proto.SeqTrack == nil {
+			s = fmt.Sprintf("proto:<state:0x%x >", proto.State)
+		} else {
+			s = fmt.Sprintf("proto:<state:0x%x seq:%d:%d ack:%d>",
+				proto.State,
+				proto.SeqTrack.LastSeq,
+				proto.SeqTrack.LastEnd,
+				proto.SeqTrack.LastAck)
+		}
+
+		return s
+	}
+
+	var msg []string
+	for i, ct := range flows {
+		/*
+			fmt.Printf("CT(%d): %+v \n", i+1, ct)
+			if ct.ProtoInfo.TCP != nil {
+				fmt.Printf("  TCP: %+v \n", *ct.ProtoInfo.TCP)
+				if ct.ProtoInfo.TCP.SeqTrack != nil {
+					fmt.Printf("  TCP SEQ: %+v \n", *ct.ProtoInfo.TCP.SeqTrack)
+				}
+			}
+		*/
+
+		m := fmt.Sprintf("CT(%d): zone:%-4d %s mark:%-2d %s timeout:%d status:%v label:%s", i,
+			ct.Zone,
+			ct.TupleOrig,
+			ct.Mark,
+			fmtProto(ct.ProtoInfo.TCP),
+			ct.Timeout,
+			ct.Status,
+			hex.EncodeToString(ct.Labels),
+		)
+
+		msg = append(msg, m)
+	}
+
+	return msg
+}
+
 func runCmdCtShow(cmd *cobra.Command, args []string) {
 	log.Debugf("Show Conntracks")
 
@@ -341,15 +390,9 @@ func runCmdCtShow(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	var i int
-	for _, ct := range cts {
-		fmt.Printf("CT(%d): %+v \n", i+1, ct)
-		if ct.ProtoInfo.TCP != nil {
-			fmt.Printf("  TCP: %+v \n", *ct.ProtoInfo.TCP)
-			if ct.ProtoInfo.TCP.SeqTrack != nil {
-				fmt.Printf("  TCP SEQ: %+v \n", *ct.ProtoInfo.TCP.SeqTrack)
-			}
-		}
+	msgs := formatCt(cts)
+	for _, f := range msgs {
+		fmt.Printf("%s\n", f)
 	}
 }
 
