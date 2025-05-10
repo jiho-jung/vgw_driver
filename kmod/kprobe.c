@@ -23,6 +23,7 @@ struct func_args {
 //#define USE_KPROBE 1
 
 extern unsigned int vgw_tcptrack_main(struct net* net, struct sk_buff *skb, struct sw_flow_key *key, struct ovs_conntrack_info *info);
+extern void dump_skb(char *msg, const struct sk_buff *skb) ;
 
 ////////////////////////
 // order of running handlers
@@ -62,13 +63,17 @@ static int kretprobe_return_handler(struct kretprobe_instance *ri, struct pt_reg
     retval = regs_return_value(regs);
     if (retval) {
         return 0;
+    } else if (args->key->recirc_id != 0) {
+        // XXX: recursively call
+        return 0;
     }
 
     vgw_tcptrack_main(args->net, args->skb, args->key, args->info);
 
-    //pr_info("run kretprobe return handler: ret_val=%lu, skb=0x%p, zone=%d, ct_state=0x%x \n", 
-    //      retval, args->skb, args->info->zone.id, args->key->ct_state);
-
+#if 0
+    pr_info("run kretprobe return handler: ret_val=%lu, skb=0x%p, zone=%d, ct_state=0x%x, commit=%d \n", 
+            retval, args->skb, args->info->zone.id, args->key->ct_state, args->info->commit);
+#endif
 
     return 0;
 }
@@ -95,10 +100,15 @@ static int kretprobe_entry_handler(struct kretprobe_instance *ri, struct pt_regs
     //args->family = info->family;
     //args->zone = info->zone.id;
 
+#if 0
+    dump_skb("kretprobe entry", (const struct sk_buff *)skb);
+    pr_info("run kretprobe entry: key.recirc_id=%u \n", key->recirc_id);
+#endif
+
     return 0;
 }
  
-struct kretprobe kr = {
+struct kretprobe kr = { 
         .kp.symbol_name = "ovs_ct_execute",
         .data_size = sizeof(struct func_args),
         .handler = kretprobe_return_handler,

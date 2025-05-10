@@ -180,8 +180,8 @@ dump_ip_tuple(struct nf_conn *ct, enum ip_conntrack_info ctinfo, const struct tc
 		   (th->fin ? 1 : 0), (th->rst ? 1 : 0));
 }
 
-static void
-dump_skb(const struct sk_buff *skb, struct nf_conn *ct, uint32_t ctinfo, u16 zone, uint32_t ovs_st)
+void
+dump_skb_ct(const struct sk_buff *skb, struct nf_conn *ct, uint32_t ctinfo, u16 zone, struct sw_flow_key *key)
 {
 	u_int8_t protonum;
 	const struct iphdr *iph;
@@ -209,8 +209,9 @@ dump_skb(const struct sk_buff *skb, struct nf_conn *ct, uint32_t ctinfo, u16 zon
 		return;
 	}
 
-	printk("TCP Track skb=0x%p %u %pI4:%hu->%pI4:%hu S=%i:%u A=%i:%u %c%c ctinfo=0x%x ct_status=0x%lx ovs_st=0x%x zone=%d\n",
+	printk("TCP Track skb=0x%p id:%u proto:%u %pI4:%hu->%pI4:%hu S=%i:%u A=%i:%u %c%c status=0x%x:0x%lx:0x%x zone=%d, recirc_id=%d\n",
 		   skb,
+		   ntohs(iph->id),
 		   protonum,
 		   &iph->saddr, ntohs(th->source),
 		   &iph->daddr, ntohs(th->dest),
@@ -219,9 +220,51 @@ dump_skb(const struct sk_buff *skb, struct nf_conn *ct, uint32_t ctinfo, u16 zon
 		   (th->fin ? 'F' : ' '), (th->rst ? 'R' : ' '),
 		   ctinfo,
 		   ct->status,
-		   ovs_st,
-		   zone);
+		   key->ct_state,
+		   zone, key->recirc_id);
 }
+
+void dump_skb(char *msg, const struct sk_buff *skb) 
+{
+	u_int8_t protonum;
+	const struct iphdr *iph;
+	struct iphdr _iph;
+	int nhoff = skb_network_offset(skb);
+	const struct tcphdr *th;
+	struct tcphdr _tcph;
+	int dataoff;
+
+	iph = skb_header_pointer(skb, nhoff, sizeof(_iph), &_iph);
+	if (!iph) {
+		printk("tcptrack: no ip hdr \n");
+		return;
+	}
+
+	dataoff = ipv4_get_l4proto(skb, nhoff, &protonum);
+	if (dataoff <= 0) {
+		printk("tcptrack: not prepared to track yet or error occurred\n");
+		return;
+	}
+
+	th = skb_header_pointer(skb, dataoff, sizeof(_tcph), &_tcph);
+	if (th == NULL) {
+		printk("tcptack: no tcp hdr \n");
+		return;
+	}
+
+	printk("Dump %s: skb:0x%p(%d) id:%u %u %pI4:%hu->%pI4:%hu S=%i:%u A=%i:%u %c%c\n",
+		   msg,
+		   skb,
+		   skb->cloned,
+		   ntohs(iph->id),
+		   protonum,
+		   &iph->saddr, ntohs(th->source),
+		   &iph->daddr, ntohs(th->dest),
+		   (th->syn ? 1 : 0), ntohl(th->seq),
+		   (th->ack ? 1 : 0), ntohl(th->ack_seq),
+		   (th->fin ? 'F' : ' '), (th->rst ? 'R' : ' '));
+}
+
 
 static bool 
 check_zone_id(uint16_t zone_id) 
@@ -373,7 +416,7 @@ vgw_tcptrack_main(struct net* net, struct sk_buff *skb, struct sw_flow_key *key,
 	}
 
 	if (is_enable_dump_packet()) {
-		dump_skb((const struct sk_buff *)skb, ct, ctinfo, zone, key->ct_state);
+		dump_skb_ct((const struct sk_buff *)skb, ct, ctinfo, zone, key);
 	}
 
 	/////////////////////
@@ -397,8 +440,8 @@ out:
 		nf_ct_put(lookup_ct);
 	}
 
-	if (ret != -10) {
-		//pr_info("vgw_tcptrack_main: ret=%d \n", ret);
+	if (is_enable_dump_packet() && ret != -10) {
+		pr_info("done vgw_tcptrack_main: ret=%d \n", ret);
 	}
 
 	return 0;
